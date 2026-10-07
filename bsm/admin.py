@@ -12,3 +12,9 @@ class BookshelfChangeAdmin(admin.ModelAdmin):
     ordering = ('-id',)
     readonly_fields = ('kind', 'shelf_pk', 'book_pk', 'status',
                        'created_at', 'processed_at')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
