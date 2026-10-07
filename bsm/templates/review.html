@@ -18,9 +18,10 @@
         <form method="post" class="votes">
           {% csrf_token %}
           <input type="hidden" name="id" value="{{ row.id }}">
-          {% if row.status == 'pending' %}
+          {% if row.status == 'pending' or row.status == 'accepted' %}
           <button class="primary" name="vote" value="approve">Approve</button>
-          {% elif row.status == 'accepted' %}
+          {% endif %}
+          {% if row.status == 'accepted' %}
           <button name="vote" value="unapprove">Unapprove</button>
           {% endif %}
           <button class="danger" name="vote" value="drop">Drop</button>

@@ -1,0 +1,19 @@
+[Unit]
+Description=bookshelf_manager Service
+After=network.target postgresql.service
+
+[Service]
+User=bookshelf
+Type=simple
+RuntimeDirectory=bookshelf_manager
+WorkingDirectory=/var/lib/bookshelf_manager
+EnvironmentFile=-/var/lib/bookshelf_manager/.env
+ExecStartPre=-/usr/bin/mkdir -p /var/run/bookshelf_manager
+ExecStart=/var/lib/bookshelf_manager/.venv/bin/gunicorn \
+    --bind 127.0.0.1:8000 \
+    --workers 2 \
+    bsm.wsgi:application
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target

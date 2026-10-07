@@ -1,20 +1,21 @@
 # Bookshelf Manager
 
-Queue adds and removes on existing Project Gutenberg bookshelves. The catalog
-database is only read from here. A reviewer accepts a change. The processor
-writes it, then marks it processed.
+Allows volunteers to propose adds and removals on Project Gutenberg bookshelves.
+Once a reviewer accepts a change, the app updates the catalog and logs it;
+view with `journalctl -u bookshelf_manager -f` or in the Django admin panel.
 
 ## Run locally
 
 Python 3.12. Postgres catalog via `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`
-(same as the other Gutenberg tools).
+(same as the other Gutenberg tools). The app needs write access to
+`mn_books_bookshelves`.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python manage.py migrate
 .venv/bin/python manage.py createsuperuser
-BSM_REVIEWERS=you@example.org BSM_API_KEY=dev .venv/bin/python manage.py runserver
+BSM_REVIEWERS=you@example.org .venv/bin/python manage.py runserver
 ```
 
 The reviewer account email must match `BSM_REVIEWERS`.
@@ -22,37 +23,13 @@ The reviewer account email must match `BSM_REVIEWERS`.
 * http://127.0.0.1:8000/
 * http://127.0.0.1:8000/review/
 
-## Changes API
+## systemd
 
-`Authorization: Bearer <BSM_API_KEY>`
-
-A change moves `pending` → `accepted` → `processed`.
-
-```
-GET  /api/accepted/
-POST /api/processed/     {"ids": [1, 2]}
-```
-
-`GET` lists accepted changes:
-
-```json
-{
-  "mn_books_bookshelves": {
-    "insert": [{"id": 1, "fk_books": 74, "fk_bookshelves": 82}],
-    "delete": [{"id": 2, "fk_books": 10551, "fk_bookshelves": 82}]
-  }
-}
-```
-
-Write those rows into `mn_books_bookshelves`, then `POST` the ids. A change is
-marked processed only when the catalog already matches.
-
-## Apply from cron
-
-`apply.py` does that one pass. It uses the same `PG*` settings as the other
-Gutenberg tools, plus `BSM_API_URL` and `BSM_API_KEY`. Failures go to
-`apply.log`. A change that cannot be written is logged there for a manual fix.
+`bookshelf_manager.service` matches the autocat layout: app under
+`/var/lib/bookshelf_manager`, venv next to it, env in `.env`.
 
 ```bash
-BSM_API_URL=http://127.0.0.1:8000 BSM_API_KEY=dev .venv/bin/python apply.py
+sudo cp bookshelf_manager.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bookshelf_manager
 ```

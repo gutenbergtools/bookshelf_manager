@@ -121,4 +121,3 @@ if env('DJANGO_SECURE_COOKIES', '0') == '1':
 PAGE_SIZE = int(env('BSM_PAGE_SIZE', '50'))
 RATE_LOGIN = env('BSM_RATE_LOGIN', '10/m')
 BSM_REVIEWERS = env_list('BSM_REVIEWERS')
-BSM_API_KEY = env('BSM_API_KEY')

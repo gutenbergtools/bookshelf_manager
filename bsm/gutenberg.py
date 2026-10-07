@@ -1,7 +1,8 @@
 from contextlib import contextmanager
 
 from django.conf import settings
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy.dialects.postgresql import insert
 
 # Same access as the other Gutenberg tools: libgutenberg session, models,
 # and the catalog view the site already serves (v_appserver_books_4).
@@ -112,6 +113,22 @@ def members(shelf_pk, book_pks):
 
 def on_shelf(shelf_pk, book_pk):
     return book_pk in members(shelf_pk, [book_pk])
+
+
+def set_membership(shelf_pk, book_pk, want):
+    """Add or remove a book on a shelf. Returns True when the catalog matches want."""
+    mem = _models().t_mn_books_bookshelves
+    with _session() as session:
+        if want:
+            session.execute(
+                insert(mem).values(
+                    fk_books=book_pk, fk_bookshelves=shelf_pk,
+                ).on_conflict_do_nothing())
+        else:
+            session.execute(delete(mem).where(
+                mem.c.fk_books == book_pk, mem.c.fk_bookshelves == shelf_pk))
+        session.commit()
+    return on_shelf(shelf_pk, book_pk) == want
 
 
 def titles(pks):

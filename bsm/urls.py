@@ -16,8 +16,6 @@ urlpatterns = [
     path('shelf/<int:pk>/add/', views.modify, {'action': 'add'}, name='add_book'),
     path('shelf/<int:pk>/remove/', views.modify, {'action': 'remove'}, name='remove_book'),
     path('review/', views.review, name='review'),
-    path('api/accepted/', views.api_accepted),
-    path('api/processed/', views.api_processed),
     path('login/', throttle_login(
         auth.LoginView.as_view(template_name='registration/login.html')), name='login'),
     path('logout/', auth.LogoutView.as_view(), name='logout'),

@@ -1,8 +1,11 @@
-from django.db import transaction
+import logging
+
 from django.utils import timezone
 
 from . import gutenberg as g
 from .models import Change, is_reviewer
+
+log = logging.getLogger(__name__)
 
 
 def _open(shelf_pk=None):
@@ -35,16 +38,52 @@ def queue(shelf_pk, book_pk, want):
 
 
 def decide(change, user, vote):
+    """Apply a reviewer vote. On approve, write the catalog then mark processed."""
     if not is_reviewer(user) or change.status == Change.PROCESSED:
         return
-    if vote == 'approve' and change.status == Change.PENDING:
-        change.status = Change.ACCEPTED
-        change.save(update_fields=['status'])
-    elif vote == 'unapprove' and change.status == Change.ACCEPTED:
+    if vote == 'approve' and change.status in (Change.PENDING, Change.ACCEPTED):
+        want = change.kind == Change.ADD
+        try:
+            ok = g.set_membership(change.shelf_pk, change.book_pk, want)
+        except Exception:
+            log.exception(
+                'Failed to %s book %s %s shelf %s, change %s.',
+                'add' if want else 'remove', change.book_pk,
+                'to' if want else 'from', change.shelf_pk, change.id)
+            return 'failed'
+        if not ok:
+            log.error(
+                'Failed to %s book %s %s shelf %s, change %s.',
+                'add' if want else 'remove', change.book_pk,
+                'to' if want else 'from', change.shelf_pk, change.id)
+            return 'failed'
+        change.status = Change.PROCESSED
+        change.processed_at = timezone.now()
+        change.save(update_fields=['status', 'processed_at'])
+        log.info(
+            '%s book %s %s shelf %s, change %s, by %s.',
+            'Added' if want else 'Removed', change.book_pk,
+            'to' if want else 'from', change.shelf_pk, change.id,
+            user.email or user.get_username(),
+        )
+        return 'processed'
+    if vote == 'unapprove' and change.status == Change.ACCEPTED:
         change.status = Change.PENDING
         change.save(update_fields=['status'])
-    elif vote == 'drop':
+        log.info('Unapproved change %s, by %s.', change.id,
+                 user.email or user.get_username())
+        return 'unapproved'
+    if vote == 'drop':
+        log.info(
+            'Dropped %s book %s %s shelf %s, change %s, by %s.',
+            'add' if change.kind == Change.ADD else 'remove',
+            change.book_pk,
+            'to' if change.kind == Change.ADD else 'from',
+            change.shelf_pk, change.id,
+            user.email or user.get_username(),
+        )
         change.delete()
+        return 'dropped'
 
 
 def rows():
@@ -58,25 +97,3 @@ def rows():
             verb, item.book_pk, titles.get(item.book_pk) or 'Untitled', prep,
             names.get(item.shelf_pk) or '#%s' % item.shelf_pk)
     return items
-
-
-def accepted():
-    inserts, deletes = [], []
-    for row in Change.objects.filter(status=Change.ACCEPTED):
-        item = {'id': row.id, 'fk_books': row.book_pk, 'fk_bookshelves': row.shelf_pk}
-        (inserts if row.kind == Change.ADD else deletes).append(item)
-    return {'mn_books_bookshelves': {'insert': inserts, 'delete': deletes}}
-
-
-@transaction.atomic
-def mark_processed(ids):
-    """Mark accepted changes processed only once the catalog already has them."""
-    done = []
-    for row in Change.objects.filter(id__in=ids, status=Change.ACCEPTED):
-        on = g.on_shelf(row.shelf_pk, row.book_pk)
-        if (row.kind == Change.ADD) == bool(on):
-            row.status = Change.PROCESSED
-            row.processed_at = timezone.now()
-            row.save(update_fields=['status', 'processed_at'])
-            done.append(row.id)
-    return done

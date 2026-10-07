@@ -1,17 +1,12 @@
-import json
-from functools import wraps
-
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.http import Http404, JsonResponse
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils.crypto import constant_time_compare
 from django.utils.http import url_has_allowed_host_and_scheme
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_POST
 
 from . import changes as ch
 from . import gutenberg as g
@@ -47,18 +42,6 @@ def _back(request, fallback):
             target, {request.get_host()}, request.is_secure()):
         return target
     return fallback
-
-
-def _api(view):
-    @csrf_exempt
-    @wraps(view)
-    def wrapped(request, *args, **kwargs):
-        given = request.headers.get('Authorization', '')
-        given = given[7:] if given.startswith('Bearer ') else given
-        if not settings.BSM_API_KEY or not constant_time_compare(given, settings.BSM_API_KEY):
-            return JsonResponse({'error': 'unauthorized'}, status=401)
-        return view(request, *args, **kwargs)
-    return wrapped
 
 
 def _shelf(pk):
@@ -139,24 +122,9 @@ def review(request):
             raise PermissionDenied
         change = get_object_or_404(
             Change, pk=request.POST.get('id'), status__in=(Change.PENDING, Change.ACCEPTED))
-        ch.decide(change, request.user, request.POST.get('vote'))
+        result = ch.decide(change, request.user, request.POST.get('vote'))
+        if result == 'failed':
+            messages.error(request, 'Could not write that change to the catalog.')
         return redirect('review')
     return render(request, 'review.html', {
         'rows': ch.rows(), 'can_review': is_reviewer(request.user)})
-
-
-@_api
-@require_GET
-def api_accepted(request):
-    return JsonResponse(ch.accepted())
-
-
-@_api
-@require_POST
-def api_processed(request):
-    try:
-        body = json.loads(request.body.decode() or '{}')
-        ids = [int(item) for item in body.get('ids') or []]
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return JsonResponse({'error': 'bad request'}, status=400)
-    return JsonResponse({'processed': ch.mark_processed(ids)})
