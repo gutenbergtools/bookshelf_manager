@@ -26,7 +26,7 @@ The reviewer account email must match `BSM_REVIEWERS`.
 ## systemd
 
 `bookshelf_manager.service` matches the autocat layout: app under
-`/var/lib/bookshelf_manager`, venv next to it, env in `.env`.
+`/var/lib/autocat/bookshelf_manager`, `.venv` and `.env` in that directory.
 
 ```bash
 sudo cp bookshelf_manager.service /etc/systemd/system/
