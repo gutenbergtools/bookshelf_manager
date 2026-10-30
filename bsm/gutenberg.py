@@ -117,6 +117,7 @@ def on_shelf(shelf_pk, book_pk):
 
 def set_membership(shelf_pk, book_pk, want):
     """Add or remove a book on a shelf. Returns True when the catalog matches want."""
+    shelf_pk, book_pk = int(shelf_pk), int(book_pk)
     mem = _models().t_mn_books_bookshelves
     with _session() as session:
         if want:

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 def env(key, default=''):
@@ -62,8 +62,9 @@ DATABASES = {'default': {
 }}
 
 CACHES = {'default': {
-    'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-    'OPTIONS': {'MAX_ENTRIES': 2000, 'CULL_FREQUENCY': 2},
+    'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+    'LOCATION': env('DJANGO_CACHE_DIR', str(BASE_DIR / 'cache')),
+    'OPTIONS': {'MAX_ENTRIES': 2000},
 }}
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -115,9 +116,9 @@ if env('DJANGO_SECURE_COOKIES', '0') == '1':
     CSRF_COOKIE_SECURE = True
     SECURE_SSL_REDIRECT = True
     SECURE_HSTS_SECONDS = 31536000
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
 
 PAGE_SIZE = int(env('BSM_PAGE_SIZE', '50'))
 RATE_LOGIN = env('BSM_RATE_LOGIN', '10/m')
+BSM_TRUSTED_PROXIES = env_list('BSM_TRUSTED_PROXIES', '127.0.0.1,::1')
+RATELIMIT_IP_META_KEY = 'bsm.proxy.client_ip'
 BSM_REVIEWERS = env_list('BSM_REVIEWERS')

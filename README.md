@@ -18,7 +18,9 @@ python3 -m venv .venv
 BSM_REVIEWERS=you@example.org .venv/bin/python manage.py runserver
 ```
 
-The reviewer account email must match `BSM_REVIEWERS`.
+The reviewer account email must match `BSM_REVIEWERS`. Copy
+`bsm/settings/local_settings.example.py` to `local_settings.py` to override
+Django settings (email, etc.) without editing the repo.
 
 * http://127.0.0.1:8000/
 * http://127.0.0.1:8000/review/
