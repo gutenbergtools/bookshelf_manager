@@ -330,6 +330,7 @@ def entity(request, name, pk=None):
         "detail": meta["detail_name"],
         "list_url": meta["list_name"],
         "list_path": meta["list_path"],
+        "str_pk": meta.get("str_pk", False),
     }
     if pk is None:
         return _listing(request, meta["search"], "entities.html", "rows", context)
