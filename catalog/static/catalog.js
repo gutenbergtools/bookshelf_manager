@@ -26,6 +26,13 @@ window.addEventListener('load', () => {
 // Enter never submits an edit form, and each form submits at most once.
 document.addEventListener('DOMContentLoaded', () => {
   const snapshot = form => JSON.stringify([...new FormData(form)].sort());
+  // Compare against the server-rendered values, not whatever the browser
+  // restored into the fields; otherwise restored edits never look dirty.
+  const defaultSnapshot = form => {
+    const clone = form.cloneNode(true);
+    clone.reset();
+    return JSON.stringify([...new FormData(clone)].sort());
+  };
   const baseline = new Map();
   const hasUnsavedChanges = () =>
     [...document.querySelectorAll('form[method="post"]')].some(
@@ -36,8 +43,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!button) return;
     button.style.display = baseline.get(form) !== snapshot(form) ? '' : 'none';
   };
+  const syncAll = () => {
+    for (const form of document.querySelectorAll('form[method="post"]')) syncSaveButton(form);
+  };
   for (const form of document.querySelectorAll('form[method="post"]')) {
-    baseline.set(form, snapshot(form));
+    baseline.set(form, defaultSnapshot(form));
     form.addEventListener('submit', event => {
       if (form.dataset.sent) {
         event.preventDefault();
@@ -46,11 +56,13 @@ document.addEventListener('DOMContentLoaded', () => {
       form.dataset.sent = '1';
     });
     if (form.querySelector('button.save')) {
-      syncSaveButton(form);
       form.addEventListener('input', () => syncSaveButton(form));
       form.addEventListener('change', () => syncSaveButton(form));
     }
   }
+  syncAll();
+  // Chrome restores edited values on back/forward without firing input events.
+  addEventListener('pageshow', syncAll);
   addEventListener('beforeunload', event => {
     if (hasUnsavedChanges()) {
       event.preventDefault();
