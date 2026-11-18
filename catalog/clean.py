@@ -96,6 +96,7 @@ ShelfForm = F(
 )
 BookForm = F(
     pk=forms.IntegerField(min_value=1, max_value=99999999),
+    title=TextField(max_length=500, required=False),
     release_date=forms.DateField(input_formats=["%Y-%m-%d"], required=False),
     copyrighted=FlagField(required=False),
     updatemode=FlagField(required=False),

@@ -33,6 +33,7 @@ def lookups():
             m.Attriblist.pk,
             m.Attriblist.name,
             lambda a, b: "%s (%s)" % (b, a),
+            order=m.Attriblist.pk,
             where=m.Attriblist.type == "unc",
         )
     return {"roles": roles, "langs": langs, "loccs": loccs, "categories": cats, "attribs": attribs}

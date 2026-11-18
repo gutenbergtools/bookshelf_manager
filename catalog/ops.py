@@ -243,6 +243,8 @@ def _book_val(session, action, data, before):
     data["release_date"] = data.get("release_date") or date.today().isoformat()
     data["copyrighted"] = data.get("copyrighted") or 0
     data["updatemode"] = data.get("updatemode") or 0
+    if not (data.get("title") or "").strip():
+        raise Bad("Enter a title.")
     return data
 
 
@@ -257,23 +259,30 @@ def _book_apply(session, action, before, after):
         after,
         {
             "release_date": parsed,
+            "title": after.get("title") or "",
             "copyrighted": after.get("copyrighted") or 0,
             "updatemode": after.get("updatemode") or 0,
         },
     )
 
 
+def _sql_str(value):
+    return str(value or "").replace("'", "''")
+
+
 def _book_sql(action, before, after):
     if action == "create":
-        return "insert into books (pk, release_date, copyrighted, updatemode) values (%s, '%s', %s, %s)" % (
+        return "insert into books (pk, release_date, title, copyrighted, updatemode) values (%s, '%s', '%s', %s, %s)" % (
             after["pk"],
             after["release_date"],
+            _sql_str(after.get("title")),
             after["copyrighted"],
             after["updatemode"],
         )
     if action == "update":
-        return "update books set release_date = '%s', copyrighted = %s, updatemode = %s where pk = %s" % (
+        return "update books set release_date = '%s', title = '%s', copyrighted = %s, updatemode = %s where pk = %s" % (
             after["release_date"],
+            _sql_str(after.get("title")),
             after["copyrighted"],
             after["updatemode"],
             after["pk"],
@@ -290,6 +299,8 @@ def _book_label(action, before, after):
     bits = []
     if (before or {}).get("release_date") != row.get("release_date"):
         bits.append("release date %s" % row.get("release_date"))
+    if (before or {}).get("title") != row.get("title"):
+        bits.append("title")
     for key, name in (("copyrighted", "copyrighted"), ("updatemode", "manual update")):
         if (before or {}).get(key) != row.get(key):
             bits.append("%s %s" % (name, "on" if row.get(key) else "off"))
@@ -300,7 +311,7 @@ Op(
     "book",
     form=BookForm,
     optional_pk=False,
-    snapshot=snap_pk(lambda s, pk: _pick(c.book_row(s, pk), ("pk", "release_date", "copyrighted", "updatemode"))),
+    snapshot=snap_pk(lambda s, pk: _pick(c.book_row(s, pk), ("pk", "release_date", "title", "copyrighted", "updatemode"))),
     validate=_book_val,
     apply=_book_apply,
     compat_sql=_book_sql,
