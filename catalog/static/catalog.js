@@ -41,8 +41,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const hasUnsavedChanges = () => [...dirtyForms].some(form => !form.dataset.sent);
   const syncSaveButton = form => {
     const button = form.querySelector('button.save');
-    if (!button) return;
-    button.style.display = baseline.get(form) !== snapshot(form) ? '' : 'none';
+    if (button) button.style.display = baseline.get(form) !== snapshot(form) ? '' : 'none';
+    // Row-level Cancel joins Save only when there is an actual edit to undo.
+    // The MARC editor Cancel stays available so it can close the editor too.
+    for (const cancel of form.querySelectorAll('button.cancel:not(.attr-toggle)')) {
+      cancel.style.display = dirtyForms.has(form) ? '' : 'none';
+    }
   };
   const syncAll = () => {
     for (const form of document.querySelectorAll('form[method="post"]')) syncSaveButton(form);
@@ -64,6 +68,16 @@ document.addEventListener('DOMContentLoaded', () => {
     form.addEventListener('change', () => dirtyForms.add(form));
   }
   syncAll();
+  // Cancel always restores the server-rendered values and clears dirty state.
+  document.addEventListener('click', event => {
+    const button = event.target.closest('button.cancel');
+    if (!button) return;
+    const form = button.closest('form');
+    if (!form) return;
+    form.reset();
+    dirtyForms.delete(form);
+    syncSaveButton(form);
+  });
   // Chrome restores edited values on back/forward without firing input events.
   addEventListener('pageshow', syncAll);
   addEventListener('beforeunload', event => {
