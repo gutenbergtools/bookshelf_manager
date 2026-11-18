@@ -1,99 +1,167 @@
+"""Apply catalog edits immediately; log them in Django/SQLite for rollback."""
+
+import hashlib
+import hmac
+import json
 import logging
 
+from django.conf import settings
+from django.core.exceptions import PermissionDenied
 from django.utils import timezone
+from sqlalchemy import func
 
+from . import catalog as c
 from . import gutenberg as g
-from .models import Change, is_reviewer
+from . import ops as registry
+from .clean import Bad, jsonable
+from .models import AuditEvent, Change, actor_name, can_rollback, can_use_op
 
 log = logging.getLogger(__name__)
 
 
-def _open(shelf_pk=None):
-    rows = Change.objects.filter(status__in=(Change.PENDING, Change.ACCEPTED))
-    if shelf_pk is not None:
-        rows = rows.filter(shelf_pk=shelf_pk)
-    return rows
+def _dump(value):
+    return json.dumps(jsonable(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def sets(shelf_pk):
-    adds, rems, accepted = set(), set(), set()
-    for kind, book_pk, status in _open(shelf_pk).values_list('kind', 'book_pk', 'status'):
-        (adds if kind == Change.ADD else rems).add(book_pk)
-        if status == Change.ACCEPTED:
-            accepted.add(book_pk)
-    return adds, rems, accepted
+def _digest(prev, row):
+    payload = _dump(
+        {
+            "id": int(row.id),
+            "op": row.op,
+            "action": row.action,
+            "target": row.target,
+            "before": row.before,
+            "after": row.after,
+            "actor": row.actor,
+            "applied_by": row.applied_by or None,
+            "restores_id": row.restores_id,
+            "processed_at": row.processed_at.isoformat() if row.processed_at else None,
+        }
+    )
+    return hmac.new(settings.SECRET_KEY.encode(), ((prev or "") + "|" + payload).encode(), hashlib.sha256).hexdigest()
 
 
-def queue(shelf_pk, book_pk, want):
-    """Queue an add or a remove. Returns queued, cleared, or same."""
-    row = _open(shelf_pk).filter(book_pk=book_pk).first()
-    kind = Change.ADD if want else Change.REMOVE
-    if row and row.kind != kind:
-        row.delete()
-        return 'cleared'
-    if row or want == g.on_shelf(shelf_pk, book_pk):
-        return 'same'
-    Change.objects.create(kind=kind, shelf_pk=shelf_pk, book_pk=book_pk)
-    return 'queued'
+def _last_digest(before_id=None):
+    qs = Change.objects.exclude(digest="").order_by("-id")
+    if before_id is not None:
+        qs = qs.filter(id__lt=before_id)
+    return qs.values_list("digest", flat=True).first() or ""
 
 
-def decide(change, user, vote):
-    """Apply a reviewer vote. On approve, write the catalog then mark processed."""
-    if not is_reviewer(user) or change.status == Change.PROCESSED:
+def _verify(row):
+    return bool(row.digest) and hmac.compare_digest(_digest(_last_digest(row.id), row), row.digest)
+
+
+def _compat(session, who, sql):
+    if not sql:
         return
-    if vote == 'approve' and change.status in (Change.PENDING, Change.ACCEPTED):
-        want = change.kind == Change.ADD
+    session.execute(
+        g._models().t_changelog.insert().values(time=func.now(), login=(who or "")[:80], sql=sql[:10000], script="bsm")
+    )
+
+
+def _record(op, action, before, after, who):
+    row = Change.objects.create(
+        op=op.name,
+        action=action,
+        target=op.target(after, before),
+        before=jsonable(before),
+        after=jsonable(after),
+        status=Change.APPLIED,
+        actor=who,
+        applied_by=who,
+        processed_at=timezone.now(),
+    )
+    row.digest = _digest(_last_digest(row.id), row)
+    row.save(update_fields=["digest"])
+    _audit(AuditEvent.APPLY, who, row)
+    return row
+
+
+def _audit(kind, who, row, note=""):
+    return AuditEvent.objects.create(
+        kind=kind,
+        actor=who,
+        change=row.pk,
+        op=row.op,
+        action=row.action,
+        target=row.target,
+        before=row.before,
+        after=row.after,
+        note=note[:200],
+    )
+
+
+def _pk(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise Bad("That change is not in the log.")
+
+
+def commit(user, op_name, action, post):
+    if action not in registry.ACTIONS:
+        raise Bad("That is not a valid action.")
+    op = registry.get(op_name)
+    if not can_use_op(user, op):
+        raise PermissionDenied
+    data = op.parse(post)
+    with c.session() as session:
+        before = op.snapshot(session, data)
+        after = op.validate(session, action, data, before)
+        if action == "update" and before is not None and jsonable(before) == jsonable(after):
+            return "same", None
+        after = op.apply(session, action, before, dict(after))
+        who = actor_name(user)
+        _compat(session, who, op.compat_sql(action, before, after))
+        session.commit()
+    row = _record(op, action, before, after, who)
+    log.info("Applied %s %s %s as %s by %s.", row.id, action, row.target, op.name, who)
+    return "applied", row
+
+
+def restore(user, pk):
+    """Toggle one change between applied and rolled back, without creating new rows."""
+    row = Change.objects.filter(pk=_pk(pk)).first()
+    if row is None or row.restores_id:
+        raise Bad("That change is not in the log.")
+    op = registry.get(row.op)
+    if not can_use_op(user, op):
+        raise PermissionDenied
+    if not can_rollback(user):
+        raise PermissionDenied
+    if not _verify(row):
+        raise Bad("This changelog row failed its integrity check. It will not be restored.")
+    undo = row.status == Change.APPLIED
+    expected = row.after if undo else row.before
+    with c.session() as session:
+        live = op.snapshot(session, expected or {})
+        matched = live is None if undo and row.action in ("delete", "unlink") else op.live_matches(live, expected)
+        if not matched:
+            raise Bad("The catalog no longer matches this change, so it cannot be safely undone.")
+        action, payload = op.invert_change(row.action, row.before, row.after) if undo else (row.action, row.after or {})
+        after = op.apply(session, action, live, op.validate(session, action, payload or {}, live))
+        who = actor_name(user)
+        _compat(session, who, op.compat_sql(action, live, after))
+        session.commit()
+    row.status = Change.ROLLED_BACK if undo else Change.APPLIED
+    row.rolled_back_by = who if undo else ""
+    row.rolled_back_at = timezone.now() if undo else None
+    row.save(update_fields=["status", "rolled_back_by", "rolled_back_at"])
+    _audit(AuditEvent.ROLLBACK if undo else AuditEvent.REAPPLY, who, row)
+    log.info("%s change %s (%s) by %s.", "Rolled back" if undo else "Reapplied", row.id, op.name, who)
+    return ("restored" if undo else "reapplied"), row
+
+
+def restore_many(user, ids):
+    ordered = sorted({_pk(value) for value in ids}, reverse=True)
+    if not ordered:
+        raise Bad("Select at least one change.")
+    done = []
+    for pk in ordered:
         try:
-            ok = g.set_membership(change.shelf_pk, change.book_pk, want)
-        except Exception:
-            log.exception(
-                'Failed to %s book %s %s shelf %s, change %s.',
-                'add' if want else 'remove', change.book_pk,
-                'to' if want else 'from', change.shelf_pk, change.id)
-            return 'failed'
-        if not ok:
-            log.error(
-                'Failed to %s book %s %s shelf %s, change %s.',
-                'add' if want else 'remove', change.book_pk,
-                'to' if want else 'from', change.shelf_pk, change.id)
-            return 'failed'
-        change.status = Change.PROCESSED
-        change.processed_at = timezone.now()
-        change.save(update_fields=['status', 'processed_at'])
-        log.info(
-            '%s book %s %s shelf %s, change %s, by %s.',
-            'Added' if want else 'Removed', change.book_pk,
-            'to' if want else 'from', change.shelf_pk, change.id,
-            user.email or user.get_username(),
-        )
-        return 'processed'
-    if vote == 'unapprove' and change.status == Change.ACCEPTED:
-        change.status = Change.PENDING
-        change.save(update_fields=['status'])
-        log.info('Unapproved change %s, by %s.', change.id,
-                 user.email or user.get_username())
-        return 'unapproved'
-    if vote == 'drop':
-        log.info(
-            'Dropped %s book %s %s shelf %s, change %s, by %s.',
-            'add' if change.kind == Change.ADD else 'remove',
-            change.book_pk,
-            'to' if change.kind == Change.ADD else 'from',
-            change.shelf_pk, change.id,
-            user.email or user.get_username(),
-        )
-        change.delete()
-        return 'dropped'
-
-
-def rows():
-    items = list(Change.objects.exclude(status=Change.PROCESSED))
-    titles = g.titles(item.book_pk for item in items)
-    names = g.shelf_names(item.shelf_pk for item in items)
-    for item in items:
-        verb = 'Add' if item.kind == Change.ADD else 'Remove'
-        prep = 'to' if item.kind == Change.ADD else 'from'
-        item.label = '%s #%s %s %s “%s”' % (
-            verb, item.book_pk, titles.get(item.book_pk) or 'Untitled', prep,
-            names.get(item.shelf_pk) or '#%s' % item.shelf_pk)
-    return items
+            restore(user, pk)
+        except Bad as exc:
+            return done, pk, str(exc)
+        done.append(pk)
+    return done, None, None

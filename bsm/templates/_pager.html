@@ -1,13 +1,1 @@
-{% if pager.pages > 1 %}
-{% with name=page_name|default:"page" %}
-<p class="pager">
-  {% if pager.has_previous %}
-  <a href="?q={{ q|urlencode }}{% if name == 'page' %}&amp;page={{ pager.previous }}{% elif keep_page > 1 %}&amp;page={{ keep_page }}{% endif %}{% if aq %}&amp;aq={{ aq|urlencode }}{% endif %}{% if name == 'apage' %}&amp;apage={{ pager.previous }}{% elif apage %}&amp;apage={{ apage }}{% endif %}">Previous</a>
-  {% endif %}
-  <span>{{ pager.page }} / {{ pager.pages }}</span>
-  {% if pager.has_next %}
-  <a href="?q={{ q|urlencode }}{% if name == 'page' %}&amp;page={{ pager.next }}{% elif keep_page > 1 %}&amp;page={{ keep_page }}{% endif %}{% if aq %}&amp;aq={{ aq|urlencode }}{% endif %}{% if name == 'apage' %}&amp;apage={{ pager.next }}{% elif apage %}&amp;apage={{ apage }}{% endif %}">Next</a>
-  {% endif %}
-</p>
-{% endwith %}
-{% endif %}
+{% if pager.pages > 1 %} <p class="pager"> {% if pager.has_previous %}<a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}={{ pager.previous }}">Previous</a>{% endif %} <span>{{ pager.page }} / {{ pager.pages }}</span> {% if pager.has_next %}<a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}={{ pager.next }}">Next</a>{% endif %} </p> {% endif %}

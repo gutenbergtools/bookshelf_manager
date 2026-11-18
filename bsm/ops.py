@@ -1,0 +1,798 @@
+"""Catalog operations: Django forms for fields, each op has an inverse for restore."""
+
+from datetime import date
+
+from django import forms
+from django.utils.dateparse import parse_date
+from sqlalchemy import and_, delete, select
+from sqlalchemy.dialects.postgresql import insert
+
+from . import catalog as c
+from . import gutenberg as g
+from .clean import (
+    LANG_RE,
+    LOCC_RE,
+    ROLE_RE,
+    AliasForm,
+    AttrForm,
+    AuthorForm,
+    Bad,
+    BAForm,
+    BookForm,
+    CodeField,
+    F,
+    LangForm,
+    ShelfForm,
+    UrlForm,
+    XferForm,
+    cleaned,
+    entity_form,
+    jsonable,
+)
+
+OPS = {}
+ACTIONS = ("create", "update", "delete", "link", "unlink")
+
+
+def get(name):
+    op = OPS.get(name)
+    if not op:
+        raise Bad("Unknown change type.")
+    return op
+
+
+def invert(action, before, after):
+    return {
+        "create": ("delete", after),
+        "delete": ("create", before),
+        "link": ("unlink", after),
+        "unlink": ("link", after),
+    }.get(action, ("update", before))
+
+
+class Op:
+    def __init__(
+        self,
+        name,
+        form=None,
+        domain="catalog",
+        snapshot=None,
+        validate=None,
+        apply=None,
+        target=None,
+        label=None,
+        compat_sql=None,
+        invert_fn=None,
+        keep=None,
+        optional_pk=True,
+    ):
+        self.name, self.domain, self.form = name, domain, form
+        self.fields = tuple(form.base_fields) if form else ()
+        self.keep, self.optional_pk = keep, optional_pk
+        self._snap, self._val, self._apply = snapshot, validate, apply
+        self._target, self._label, self._sql, self._invert = target, label, compat_sql, invert_fn
+        OPS[name] = self
+
+    def parse(self, post):
+        return dict((f, post.get(f, "")) for f in self.fields)
+
+    def snapshot(self, session, data):
+        return self._snap(session, data) if self._snap else None
+
+    def validate(self, session, action, data, before):
+        return (
+            jsonable(
+                self._val(
+                    session,
+                    action,
+                    cleaned(self.form, data, action, keep=self.keep, optional_pk=self.optional_pk),
+                    before,
+                )
+            )
+            if self.form
+            else jsonable(self._val(session, action, data, before))
+        )
+
+    def apply(self, session, action, before, after):
+        return self._apply(session, action, before, after)
+
+    def target(self, data, before=None):
+        return (
+            self._target(data, before)
+            if self._target
+            else "%s:%s" % (self.name, data.get("pk") or (before or {}).get("pk") or "new")
+        )
+
+    def label(self, action, before, after):
+        if self._label:
+            return self._label(action, before, after)
+        payload = after or before or {}
+        return "%s %s %s" % (action, self.name.replace("_", " "), payload.get("pk") or "")
+
+    def compat_sql(self, action, before, after):
+        return self._sql(action, before, after) if self._sql else None
+
+    def invert_change(self, action, before, after):
+        return self._invert(action, before, after) if self._invert else invert(action, before, after)
+
+    def live_matches(self, live, expected):
+        return live is None if expected is None else live is not None and jsonable(live) == jsonable(expected)
+
+
+def _m():
+    return g._models()
+
+
+def _ids(session, column, where=None):
+    return set(session.scalars(select(column) if where is None else select(column).where(where)).all())
+
+
+def _pk(data, before=None):
+    return data.get("pk") or (before or {}).get("pk")
+
+
+def _pick(row, keys):
+    return None if row is None else {key: row[key] for key in keys}
+
+
+def _need(before, kind):
+    if not before:
+        raise Bad("No such %s." % kind)
+
+
+def apply_row(session, model, action, after, values, pk_attr="pk"):
+    if action == "delete":
+        session.execute(delete(model).where(getattr(model, pk_attr) == after["pk"]))
+        return after
+    if action == "create":
+        kwargs = dict(values)
+        if after.get("pk") is not None:
+            kwargs[pk_attr] = after["pk"]
+        row = model(**kwargs)
+        session.add(row)
+        session.flush()
+        after["pk"] = getattr(row, pk_attr)
+        return after
+    row = session.get(model, after["pk"])
+    for key, value in values.items():
+        setattr(row, key, value)
+    return after
+
+
+def snap_pk(getter):
+    def snapshot(session, data):
+        raw = str(data.get("pk") or "").strip()
+        if not raw:
+            return None
+        try:
+            pk = int(raw)
+        except ValueError:
+            pk = raw
+        return getter(session, pk)
+
+    return snapshot
+
+
+def exists_state(action, before, kind):
+    if action in ("create", "link") and before:
+        raise Bad("Already linked." if action == "link" else "That %s already exists." % kind)
+    if action in ("update", "unlink", "delete") and not before:
+        raise Bad("Not linked." if action == "unlink" else "No such %s." % kind)
+
+
+def _shelf_val(session, action, data, before):
+    if g.shelf(data["shelf_pk"]) is None:
+        raise Bad("No such bookshelf.")
+    if g.book_title(data["book_pk"]) is None:
+        raise Bad("No ebook #%s exists in the catalog." % data["book_pk"])
+    want = {"link": 1, "unlink": 0}.get(action, data.get("want") or 0)
+    if want and before and before.get("on"):
+        raise Bad("That book is already on this shelf.")
+    if not want and before and not before.get("on"):
+        raise Bad("That book is not on this shelf.")
+    return {"shelf_pk": data["shelf_pk"], "book_pk": data["book_pk"], "on": want}
+
+
+def _shelf_apply(session, action, before, after):
+    mem = _m().t_mn_books_bookshelves
+    keys = dict(fk_books=after["book_pk"], fk_bookshelves=after["shelf_pk"])
+    if after["on"]:
+        session.execute(insert(mem).values(**keys).on_conflict_do_nothing())
+    else:
+        session.execute(
+            delete(mem).where(mem.c.fk_books == after["book_pk"], mem.c.fk_bookshelves == after["shelf_pk"])
+        )
+    return after
+
+
+def _shelf_label(action, before, after):
+    data = after or before
+    verb, prep = ("Add", "to") if data.get("on") else ("Remove", "from")
+    title = g.book_title(data["book_pk"]) or "Untitled"
+    names = g.shelf_names([data["shelf_pk"]])
+    return "%s #%s %s %s “%s”" % (
+        verb,
+        data["book_pk"],
+        title,
+        prep,
+        names.get(data["shelf_pk"]) or "#%s" % data["shelf_pk"],
+    )
+
+
+Op(
+    "shelf_member",
+    form=ShelfForm,
+    domain="shelves",
+    snapshot=lambda s, d: {
+        "shelf_pk": int(d["shelf_pk"]),
+        "book_pk": int(d["book_pk"]),
+        "on": int(g.on_shelf(int(d["shelf_pk"]), int(d["book_pk"]))),
+    },
+    validate=_shelf_val,
+    apply=_shelf_apply,
+    target=lambda data, before=None: "shelf:%s/book:%s" % (data["shelf_pk"], data["book_pk"]),
+    label=_shelf_label,
+)
+
+
+def _book_val(session, action, data, before):
+    if action == "delete":
+        raise Bad("Books cannot be deleted here.")
+    exists_state(action, before, "ebook")
+    data["release_date"] = data.get("release_date") or date.today().isoformat()
+    data["copyrighted"] = data.get("copyrighted") or 0
+    data["updatemode"] = data.get("updatemode") or 0
+    return data
+
+
+def _book_apply(session, action, before, after):
+    parsed = parse_date(str(after.get("release_date") or date.today().isoformat())[:10])
+    if parsed is None:
+        raise Bad("Enter the official release date.")
+    return apply_row(
+        session,
+        _m().Book,
+        action,
+        after,
+        {
+            "release_date": parsed,
+            "copyrighted": after.get("copyrighted") or 0,
+            "updatemode": after.get("updatemode") or 0,
+        },
+    )
+
+
+def _book_sql(action, before, after):
+    if action == "create":
+        return "insert into books (pk, release_date, copyrighted, updatemode) values (%s, '%s', %s, %s)" % (
+            after["pk"],
+            after["release_date"],
+            after["copyrighted"],
+            after["updatemode"],
+        )
+    if action == "update":
+        return "update books set release_date = '%s', copyrighted = %s, updatemode = %s where pk = %s" % (
+            after["release_date"],
+            after["copyrighted"],
+            after["updatemode"],
+            after["pk"],
+        )
+    return None
+
+
+def _book_label(action, before, after):
+    row = after or before or {}
+    if action == "create":
+        return "Create book #%s" % row["pk"]
+    if action == "delete":
+        return "Delete book #%s" % row["pk"]
+    bits = []
+    if (before or {}).get("release_date") != row.get("release_date"):
+        bits.append("release date %s" % row.get("release_date"))
+    for key, name in (("copyrighted", "copyrighted"), ("updatemode", "manual update")):
+        if (before or {}).get(key) != row.get(key):
+            bits.append("%s %s" % (name, "on" if row.get(key) else "off"))
+    return "Book #%s: %s" % (row["pk"], ", ".join(bits) or "saved")
+
+
+Op(
+    "book",
+    form=BookForm,
+    optional_pk=False,
+    snapshot=snap_pk(lambda s, pk: _pick(c.book_row(s, pk), ("pk", "release_date", "copyrighted", "updatemode"))),
+    validate=_book_val,
+    apply=_book_apply,
+    compat_sql=_book_sql,
+    target=lambda data, before=None: "book:%s" % _pk(data, before),
+    label=_book_label,
+)
+
+
+def _author_val(session, action, data, before):
+    if action == "delete":
+        _need(before, "author")
+        if c.author_book_count(session, data["pk"]):
+            raise Bad("Unlink this author from every book before deleting.")
+        return {"pk": data["pk"]}
+    exists_state(action, before, "author")
+    return data
+
+
+def _author_apply(session, action, before, after):
+    m = _m()
+    if action == "delete":
+        session.execute(delete(m.Alias).where(m.Alias.fk_authors == after["pk"]))
+        session.execute(delete(m.AuthorUrl).where(m.AuthorUrl.fk_authors == after["pk"]))
+        session.execute(delete(m.Author).where(m.Author.id == after["pk"]))
+        return after
+    return apply_row(
+        session,
+        m.Author,
+        action,
+        after,
+        {
+            "name": after["author"],
+            "birthdate": after["born_floor"],
+            "birthdate2": after["born_ceil"],
+            "deathdate": after["died_floor"],
+            "deathdate2": after["died_ceil"],
+            "note": after["note"] or None,
+        },
+        "id",
+    )
+
+
+Op(
+    "author",
+    form=AuthorForm,
+    snapshot=snap_pk(c.author_row),
+    validate=_author_val,
+    apply=_author_apply,
+    target=lambda data, before=None: (
+        "author:%s" % _pk(data, before)
+        if _pk(data, before) not in (None, "")
+        else "author:new:%s" % (data.get("author") or "")[:80]
+    ),
+    label=lambda a, b, f: (
+        "%s author %s" % (a.capitalize(), (f or b or {}).get("author") or "#%s" % (f or b or {}).get("pk"))
+    ),
+)
+
+
+def _child_val(session, action, data, before, kind, fk, fk_name, exists):
+    if not exists(session, data[fk]):
+        raise Bad("No such %s." % fk_name)
+    if action == "delete":
+        _need(before, kind)
+        return {"pk": data["pk"], fk: data[fk]}
+    return data
+
+
+Op(
+    "alias",
+    form=AliasForm,
+    snapshot=snap_pk(c.alias_row),
+    validate=lambda s, a, d, b: _child_val(s, a, d, b, "alias", "fk_authors", "author", c.exists_author),
+    apply=lambda s, a, b, f: apply_row(
+        s,
+        _m().Alias,
+        a,
+        f,
+        {"fk_authors": f["fk_authors"], "alias": f.get("alias"), "heading": f.get("heading")} if a != "delete" else {},
+    ),
+    target=lambda data, before=None: (
+        "alias:%s" % _pk(data, before)
+        if _pk(data, before)
+        else "author:%s/alias:%s" % (data.get("fk_authors"), (data.get("alias") or "")[:40])
+    ),
+    label=lambda a, b, f: "%s alias “%s”" % (a.capitalize(), (f or b).get("alias") or (f or b).get("pk")),
+)
+Op(
+    "author_url",
+    form=UrlForm,
+    snapshot=snap_pk(c.url_row),
+    validate=lambda s, a, d, b: _child_val(s, a, d, b, "URL", "fk_authors", "author", c.exists_author),
+    apply=lambda s, a, b, f: apply_row(
+        s,
+        _m().AuthorUrl,
+        a,
+        f,
+        {
+            "fk_authors": f["fk_authors"],
+            "description": f.get("description") or None,
+            "url": f.get("url"),
+        }
+        if a != "delete"
+        else {},
+    ),
+    target=lambda data, before=None: (
+        "author_url:%s" % _pk(data, before) if _pk(data, before) else "author:%s/url:new" % data.get("fk_authors")
+    ),
+    label=lambda a, b, f: "%s author URL" % a.capitalize(),
+)
+
+
+def add_link(name, table_fn, field, other_name, exists, other_field=None):
+    form = F(
+        **{
+            "fk_books": forms.IntegerField(min_value=1),
+            field: other_field or forms.IntegerField(min_value=1),
+        }
+    )
+
+    def snapshot(session, data):
+        book, other = data.get("fk_books"), data.get(field)
+        if book in (None, "") or other in (None, ""):
+            return None
+        bound = cleaned(form, data)
+        row = c.linked(session, table_fn(), bound["fk_books"], field, bound[field])
+        return None if row is None else {"fk_books": bound["fk_books"], field: bound[field]}
+
+    def validate(session, action, data, before):
+        if not c.exists_book(session, data["fk_books"]):
+            raise Bad("No such ebook.")
+        if not exists(session, data[field]):
+            raise Bad("That %s is not in the catalog." % other_name)
+        exists_state(action, before, other_name)
+        return {"fk_books": data["fk_books"], field: data[field]}
+
+    def apply(session, action, before, after):
+        table = table_fn()
+        keys = {"fk_books": after["fk_books"], field: after[field]}
+        if action == "link":
+            session.execute(insert(table).values(**keys).on_conflict_do_nothing())
+        else:
+            session.execute(
+                delete(table).where(
+                    and_(
+                        table.c.fk_books == after["fk_books"],
+                        getattr(table.c, field) == after[field],
+                    )
+                )
+            )
+        return after
+
+    Op(
+        name,
+        form=form,
+        snapshot=snapshot,
+        validate=validate,
+        apply=apply,
+        target=lambda data, before=None: (
+            "book:%s/%s:%s"
+            % (
+                (data if data.get(field) else (before or data)).get("fk_books"),
+                field,
+                (data if data.get(field) else (before or data)).get(field),
+            )
+        ),
+        label=lambda a, b, f: (
+            "Book #%s: %s %s %s"
+            % (
+                (f or b).get("fk_books"),
+                "link" if a == "link" else "unlink",
+                other_name,
+                (f or b).get(field),
+            )
+        ),
+    )
+
+
+add_link("book_subject", lambda: _m().t_mn_books_subjects, "fk_subjects", "subject", c.exists_subject)
+add_link(
+    "book_lang",
+    lambda: _m().t_mn_books_langs,
+    "fk_langs",
+    "language",
+    lambda s, v: s.get(_m().Lang, v) is not None,
+    CodeField(LANG_RE),
+)
+add_link(
+    "book_locc",
+    lambda: _m().t_mn_books_loccs,
+    "fk_loccs",
+    "LoC class",
+    lambda s, v: s.get(_m().Locc, v) is not None,
+    CodeField(LOCC_RE, case="upper"),
+)
+add_link(
+    "book_category",
+    lambda: _m().t_mn_books_categories,
+    "fk_categories",
+    "category",
+    lambda s, v: s.get(_m().Category, int(v)) is not None,
+)
+
+
+def _ba_snap(session, data):
+    data = dict(data)
+    data["fk_roles"] = data.get("fk_roles") or "cr"
+    bound = cleaned(BAForm, data)
+    role = bound.get("was_roles") or bound["fk_roles"]
+    row = c.linked(
+        session,
+        _m().BookAuthor.__table__,
+        bound["fk_books"],
+        "fk_authors",
+        bound["fk_authors"],
+        {"fk_roles": role},
+    )
+    return (
+        None
+        if row is None
+        else {
+            "fk_books": bound["fk_books"],
+            "fk_authors": bound["fk_authors"],
+            "fk_roles": row["fk_roles"],
+            "heading": row.get("heading"),
+        }
+    )
+
+
+def _ba_val(session, action, data, before):
+    if not c.exists_book(session, data["fk_books"]):
+        raise Bad("No such ebook.")
+    if not c.exists_author(session, data["fk_authors"]):
+        raise Bad("That author is not in the catalog.")
+    role = data.get("fk_roles") or (before or {}).get("fk_roles") or "cr"
+    if role not in _ids(session, _m().Role.pk):
+        raise Bad("That author role is not in the catalog.")
+    if action == "link" and before:
+        raise Bad("Already linked.")
+    if action in ("unlink", "update") and not before:
+        raise Bad("Not linked.")
+    return {
+        "fk_books": data["fk_books"],
+        "fk_authors": data["fk_authors"],
+        "fk_roles": role,
+        "heading": data.get("heading") if data.get("heading") is not None else 1,
+    }
+
+
+def _ba_apply(session, action, before, after):
+    table = _m().BookAuthor.__table__
+    if action == "link":
+        session.execute(
+            insert(table)
+            .values(
+                fk_books=after["fk_books"],
+                fk_authors=after["fk_authors"],
+                fk_roles=after["fk_roles"],
+                heading=after["heading"],
+            )
+            .on_conflict_do_nothing()
+        )
+    elif action == "update":
+        session.execute(
+            table.update()
+            .where(
+                and_(
+                    table.c.fk_books == after["fk_books"],
+                    table.c.fk_authors == after["fk_authors"],
+                    table.c.fk_roles == (before or after)["fk_roles"],
+                )
+            )
+            .values(fk_roles=after["fk_roles"], heading=after["heading"])
+        )
+    else:
+        session.execute(
+            delete(table).where(
+                and_(
+                    table.c.fk_books == after["fk_books"],
+                    table.c.fk_authors == after["fk_authors"],
+                    table.c.fk_roles == after["fk_roles"],
+                )
+            )
+        )
+    return after
+
+
+def _ba_sql(action, before, after):
+    book = after["fk_books"]
+    if action == "link":
+        return "insert into mn_books_authors (fk_books, fk_authors, fk_roles, heading) values (%s, %s, '%s', %s)" % (
+            book,
+            after["fk_authors"],
+            after["fk_roles"],
+            after["heading"],
+        )
+    if action == "update":
+        return "update mn_books_authors set fk_roles = '%s', heading = %s where fk_books = %s and fk_authors = %s" % (
+            after["fk_roles"],
+            after["heading"],
+            book,
+            after["fk_authors"],
+        )
+    return "delete from mn_books_authors where fk_books = %s and fk_authors = %s and fk_roles = '%s'" % (
+        book,
+        after["fk_authors"],
+        after["fk_roles"],
+    )
+
+
+Op(
+    "book_author",
+    form=BAForm,
+    snapshot=_ba_snap,
+    validate=_ba_val,
+    apply=_ba_apply,
+    compat_sql=_ba_sql,
+    target=lambda data, before=None: (
+        "book:%s/fk_authors:%s/fk_roles:%s"
+        % (
+            (data if data.get("fk_authors") else (before or data)).get("fk_books"),
+            (data if data.get("fk_authors") else (before or data)).get("fk_authors"),
+            (data if data.get("fk_roles") else (before or data)).get("fk_roles"),
+        )
+    ),
+    label=lambda a, b, f: (
+        "Book #%s: %s author #%s (%s)"
+        % (
+            (f or b)["fk_books"],
+            {"link": "link", "unlink": "unlink", "update": "change role of"}.get(a, a),
+            (f or b)["fk_authors"],
+            (f or b).get("fk_roles"),
+        )
+    ),
+)
+
+
+def _attr_val(session, action, data, before):
+    after = _child_val(session, action, data, before, "attribute", "fk_books", "ebook", c.exists_book)
+    if action == "delete":
+        return after
+    tags = _m().Attriblist
+    where = tags.type == "unc" if action == "create" else None
+    if after["fk_attriblist"] not in _ids(session, tags.pk, where):
+        raise Bad("Choose a MARC tag from the list.")
+    after["nonfiling"] = after.get("nonfiling") or 0
+    if after["nonfiling"] > len(after["text"]):
+        raise Bad("Nonfiling characters cannot be longer than the text.")
+    lang = after.get("fk_langs") or None
+    if lang in ("", "undefined"):
+        lang = None
+    if lang and session.get(_m().Lang, lang) is None:
+        raise Bad("That language is not in the catalog.")
+    after["fk_langs"] = lang
+    return after
+
+
+Op(
+    "attribute",
+    form=AttrForm,
+    snapshot=snap_pk(c.attribute_row),
+    validate=_attr_val,
+    apply=lambda s, a, b, f: apply_row(
+        s,
+        _m().Attribute,
+        a,
+        f,
+        dict((k, f[k]) for k in ("fk_books", "fk_attriblist", "text", "nonfiling", "indicators", "fk_langs"))
+        if a != "delete"
+        else {},
+    ),
+    compat_sql=lambda a, b, f: (
+        None
+        if a == "delete" or f.get("fk_attriblist") != 245
+        else 'update attributes set  "fk_attriblist" = 245 where pk = %s' % f["pk"]
+    ),
+    target=lambda data, before=None: (
+        "attribute:%s" % _pk(data, before)
+        if _pk(data, before)
+        else "book:%s/attribute:new:%s" % (data.get("fk_books"), data.get("fk_attriblist"))
+    ),
+    label=lambda a, b, f: (
+        "Book #%s: %s MARC %s"
+        % (
+            (f or b).get("fk_books"),
+            {"create": "add", "update": "edit", "delete": "delete"}.get(a, a),
+            (f or b).get("fk_attriblist"),
+        )
+    ),
+)
+
+
+def add_entity(name, model, pk_name, label_field, form, str_pk=False):
+    def snapshot(session, data):
+        raw = data.get("pk")
+        if raw in (None, ""):
+            return None
+        bound = cleaned(form, {"pk": raw}, action="delete")
+        row = session.get(getattr(_m(), model), bound["pk"])
+        return None if row is None else {"pk": getattr(row, pk_name), label_field: getattr(row, label_field)}
+
+    def validate(session, action, data, before):
+        if action == "delete":
+            _need(before, name)
+            return {"pk": data["pk"]}
+        exists_state(action, before, name)
+        return {"pk": data["pk"], label_field: data.get(label_field) or data.get(name)}
+
+    def apply(session, action, before, after):
+        return apply_row(
+            session,
+            getattr(_m(), model),
+            action,
+            after,
+            {label_field: after[label_field]} if action != "delete" else {},
+            pk_name,
+        )
+
+    Op(
+        name,
+        form=form,
+        optional_pk=not str_pk,
+        snapshot=snapshot,
+        validate=validate,
+        apply=apply,
+        label=lambda a, b, f: (
+            "%s %s “%s”" % (a.capitalize(), name, (f or b or {}).get(label_field) or (f or b or {}).get("pk"))
+        ),
+    )
+
+
+add_entity("subject", "Subject", "id", "subject", entity_form("subject"))
+add_entity("category", "Category", "pk", "category", entity_form("category"))
+add_entity("lang", "Lang", "id", "language", LangForm, str_pk=True)
+add_entity(
+    "locc",
+    "Locc",
+    "id",
+    "locc",
+    entity_form("locc", str_pk=True, regex=LOCC_RE, case="upper"),
+    str_pk=True,
+)
+
+
+def _xfer_val(session, action, data, before):
+    src, dst, role = data["fk_authors_from"], data["fk_authors_to"], data.get("fk_roles") or "same"
+    if src == dst and role in ("", "same"):
+        raise Bad("Choose a different author, or a new role.")
+    if not c.exists_author(session, src) or not c.exists_author(session, dst):
+        raise Bad("Both authors must exist.")
+    if not before or not before.get("links"):
+        raise Bad("That author has no books to transfer.")
+    if role != "same":
+        bound = CodeField(ROLE_RE).clean(role)
+        if bound not in _ids(session, _m().Role.pk):
+            raise Bad("That author role is not in the catalog.")
+        role = bound
+    return {
+        "fk_authors_from": src,
+        "fk_authors_to": dst,
+        "fk_roles": role,
+        "links": before["links"],
+    }
+
+
+def _xfer_apply(session, action, before, after):
+    table = _m().BookAuthor.__table__
+    values = {"fk_authors": after["fk_authors_to"]}
+    if after["fk_roles"] != "same":
+        values["fk_roles"] = after["fk_roles"]
+    session.execute(table.update().where(table.c.fk_authors == after["fk_authors_from"]).values(**values))
+    return after
+
+
+Op(
+    "author_transfer",
+    form=XferForm,
+    snapshot=lambda s, d: {
+        "links": c.author_links(s, int(d["fk_authors_from"])),
+        "fk_authors_from": int(d["fk_authors_from"]),
+    },
+    validate=_xfer_val,
+    apply=_xfer_apply,
+    target=lambda data, before=None: "author:%s/transfer:%s" % (data.get("fk_authors_from"), data.get("fk_authors_to")),
+    invert_fn=lambda action, before, after: (
+        "update",
+        {
+            "fk_authors_from": after["fk_authors_to"],
+            "fk_authors_to": after["fk_authors_from"],
+            "fk_roles": "same",
+        },
+    ),
+    label=lambda a, b, f: (
+        "Transfer books from author #%s to #%s" % ((f or b)["fk_authors_from"], (f or b).get("fk_authors_to"))
+    ),
+)

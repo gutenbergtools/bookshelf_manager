@@ -1,11 +1,7 @@
 from contextlib import contextmanager
 
 from django.conf import settings
-from sqlalchemy import and_, delete, func, or_, select
-from sqlalchemy.dialects.postgresql import insert
-
-# Same access as the other Gutenberg tools: libgutenberg session, models,
-# and the catalog view the site already serves (v_appserver_books_4).
+from sqlalchemy import and_, func, or_, select
 
 _base = None
 _lib = None
@@ -16,8 +12,8 @@ def _models():
     if _lib is None:
         from libgutenberg import Models
         from libgutenberg.GutenbergDatabase import Objectbase
-        _base = Objectbase(False)
-        _lib = Models
+
+        _base, _lib = Objectbase(False), Models
     return _lib
 
 
@@ -31,9 +27,9 @@ def _session():
         session.close()
 
 
-def _page(stmt, session, page):
+def _page(stmt, session, page, size=None):
     page = max(1, int(page or 1))
-    size = settings.PAGE_SIZE
+    size = max(1, int(size or settings.PAGE_SIZE))
     total = session.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     rows = session.execute(stmt.limit(size).offset((page - 1) * size)).mappings().all()
     return [dict(row) for row in rows], total
@@ -41,52 +37,56 @@ def _page(stmt, session, page):
 
 def _titles(rows):
     for row in rows:
-        lines = [part.strip() for part in (row.get('title') or '').split('\n') if part.strip()]
-        row['title'] = lines[0] if lines else 'Untitled'
-        row['subtitle'] = '; '.join(lines[1:])
-        author = row.get('author') or []
-        row['authors'] = '; '.join(author) if isinstance(author, (list, tuple)) else author
+        lines = [part.strip() for part in (row.get("title") or "").split("\n") if part.strip()]
+        row["title"] = lines[0] if lines else "Untitled"
+        row["subtitle"] = "; ".join(lines[1:])
+        author = row.get("author") or []
+        row["authors"] = "; ".join(author) if isinstance(author, (list, tuple)) else author
     return rows
 
 
 def _book_query(query):
     cat = _models().t_v_appserver_books_4
-    if str(query).isdigit():
-        return cat, cat.c.pk == int(query)
-    match = cat.c.tsvec.op('@@')(func.websearch_to_tsquery('english', query))
-    return cat, match
+    return (
+        (cat, cat.c.pk == int(query))
+        if str(query).isdigit()
+        else (cat, cat.c.tsvec.op("@@")(func.websearch_to_tsquery("english", query)))
+    )
 
 
-def shelves(query='', page=1):
+def _shelf_stmt():
     m = _models()
     shelf, mem = m.Bookshelf, m.t_mn_books_bookshelves
     stmt = (
-        select(shelf.id.label('pk'), shelf.bookshelf, shelf.downloads,
-               func.count(mem.c.fk_books).label('books'))
+        select(
+            shelf.id.label("pk"),
+            shelf.bookshelf,
+            shelf.downloads,
+            func.count(mem.c.fk_books).label("books"),
+        )
         .outerjoin(mem, mem.c.fk_bookshelves == shelf.id)
         .group_by(shelf.id, shelf.bookshelf, shelf.downloads)
-        .order_by(shelf.bookshelf))
+    )
+    return shelf, stmt
+
+
+def shelves(query="", page=1):
+    shelf, stmt = _shelf_stmt()
+    stmt = stmt.order_by(shelf.bookshelf)
     if query:
-        if query.isdigit():
-            cond = shelf.id == int(query)
-        else:
-            cond = shelf.tsvec.op('@@')(func.websearch_to_tsquery('english', query))
-        stmt = stmt.where(cond)
+        stmt = stmt.where(
+            shelf.id == int(query)
+            if query.isdigit()
+            else shelf.tsvec.op("@@")(func.websearch_to_tsquery("english", query))
+        )
     with _session() as session:
         return _page(stmt, session, page)
 
 
 def shelf(pk):
-    m = _models()
-    shelf, mem = m.Bookshelf, m.t_mn_books_bookshelves
-    stmt = (
-        select(shelf.id.label('pk'), shelf.bookshelf, shelf.downloads,
-               func.count(mem.c.fk_books).label('books'))
-        .outerjoin(mem, mem.c.fk_bookshelves == shelf.id)
-        .where(shelf.id == pk)
-        .group_by(shelf.id, shelf.bookshelf, shelf.downloads))
+    _shelf, stmt = _shelf_stmt()
     with _session() as session:
-        row = session.execute(stmt).mappings().first()
+        row = session.execute(stmt.where(_shelf.id == pk)).mappings().first()
     return dict(row) if row else None
 
 
@@ -96,8 +96,9 @@ def shelf_names(pks):
         return {}
     shelf = _models().Bookshelf
     with _session() as session:
-        rows = session.execute(select(shelf.id, shelf.bookshelf).where(shelf.id.in_(pks))).all()
-    return {pk: name for pk, name in rows}
+        return {
+            pk: name for pk, name in session.execute(select(shelf.id, shelf.bookshelf).where(shelf.id.in_(pks))).all()
+        }
 
 
 def members(shelf_pk, book_pks):
@@ -106,30 +107,16 @@ def members(shelf_pk, book_pks):
         return set()
     mem = _models().t_mn_books_bookshelves
     with _session() as session:
-        rows = session.execute(select(mem.c.fk_books).where(
-            mem.c.fk_bookshelves == shelf_pk, mem.c.fk_books.in_(book_pks))).all()
-    return {row[0] for row in rows}
+        return {
+            row[0]
+            for row in session.execute(
+                select(mem.c.fk_books).where(mem.c.fk_bookshelves == shelf_pk, mem.c.fk_books.in_(book_pks))
+            ).all()
+        }
 
 
 def on_shelf(shelf_pk, book_pk):
     return book_pk in members(shelf_pk, [book_pk])
-
-
-def set_membership(shelf_pk, book_pk, want):
-    """Add or remove a book on a shelf. Returns True when the catalog matches want."""
-    shelf_pk, book_pk = int(shelf_pk), int(book_pk)
-    mem = _models().t_mn_books_bookshelves
-    with _session() as session:
-        if want:
-            session.execute(
-                insert(mem).values(
-                    fk_books=book_pk, fk_bookshelves=shelf_pk,
-                ).on_conflict_do_nothing())
-        else:
-            session.execute(delete(mem).where(
-                mem.c.fk_books == book_pk, mem.c.fk_bookshelves == shelf_pk))
-        session.commit()
-    return on_shelf(shelf_pk, book_pk) == want
 
 
 def titles(pks):
@@ -138,37 +125,48 @@ def titles(pks):
         return {}
     cat = _models().t_v_appserver_books_4
     with _session() as session:
-        rows = _titles([dict(row) for row in session.execute(
-            select(cat.c.pk, cat.c.title).where(cat.c.pk.in_(pks))).mappings()])
-    return {row['pk']: row['title'] for row in rows}
+        rows = _titles(
+            [dict(row) for row in session.execute(select(cat.c.pk, cat.c.title).where(cat.c.pk.in_(pks))).mappings()]
+        )
+    return {row["pk"]: row["title"] for row in rows}
 
 
 def book_title(pk):
     return titles([pk]).get(pk)
 
 
-def shelf_books(shelf_pk, query='', page=1, also=()):
-    cat, mem = _models().t_v_appserver_books_4, _models().t_mn_books_bookshelves
+def _books_stmt(cond):
+    cat = _models().t_v_appserver_books_4
+    return select(cat.c.pk, cat.c.title, cat.c.author, cat.c.downloads).where(cond).order_by(cat.c.filing)
+
+
+def shelf_books(shelf_pk, query="", page=1, also=()):
+    m = _models()
+    cat, mem = m.t_v_appserver_books_4, m.t_mn_books_bookshelves
     cond = cat.c.pk.in_(select(mem.c.fk_books).where(mem.c.fk_bookshelves == shelf_pk))
     extra = [pk for pk in also if pk]
     if extra:
         cond = or_(cond, cat.c.pk.in_(extra))
     if query:
-        _cat, match = _book_query(query)
-        cond = and_(cond, match)
-    stmt = (select(cat.c.pk, cat.c.title, cat.c.author, cat.c.downloads)
-            .where(cond).order_by(cat.c.filing))
+        cond = and_(cond, _book_query(query)[1])
     with _session() as session:
-        rows, total = _page(stmt, session, page)
+        rows, total = _page(_books_stmt(cond), session, page)
     return _titles(rows), total
 
 
-def search_books(query, page=1):
+def search_books(query, page=1, size=None):
     if not query:
         return [], 0
-    cat, match = _book_query(query)
-    stmt = (select(cat.c.pk, cat.c.title, cat.c.author, cat.c.downloads)
-            .where(match).order_by(cat.c.downloads.desc()))
+    _cat, match = _book_query(query)
+    cat = _models().t_v_appserver_books_4
     with _session() as session:
-        rows, total = _page(stmt, session, page)
+        rows, total = _page(_books_stmt(match).order_by(cat.c.downloads.desc()), session, page, size)
+    return _titles(rows), total
+
+
+def recent_books(page=1):
+    """Default Books listing: newest ebook numbers first."""
+    cat = _models().t_v_appserver_books_4
+    with _session() as session:
+        rows, total = _page(_books_stmt(True).order_by(cat.c.pk.desc()), session, page)
     return _titles(rows), total

@@ -1,37 +1,46 @@
-# Bookshelf Manager
+# Catalog Manager
 
-Allows volunteers to propose adds and removals on Project Gutenberg bookshelves.
-Once a reviewer accepts a change, the app updates the catalog and logs it;
-view with `journalctl -u bookshelf_manager -f` or in the Django admin panel.
+Two deployments share this codebase, isolated by `CATALOG_APP` (legacy alias: `BSM_APP`):
+
+| Mode | `CATALOG_APP` | Audience | Surface |
+|------|---------------|----------|---------|
+| **Catalog** | `catalog` | Catalogers | Books, authors, subjects, categories, languages, LoC classes, reports; Django admin for changelog + mirrors/robot blocks |
+| **Shelves** | `shelves` | Volunteers | Bookshelves only (`/shelves/`, `/shelf/<id>/`) — catalog URLs 404 |
+
+Run them as **separate processes on separate hostnames** (cookies: `catalog_cat*` vs `catalog_shelf*`). Example: `catalog.example.org` → catalog on `:8000`; `shelves.example.org` → shelves on `:8001`.
+
+Edits go through propose/apply with validated values. Applied rows live in SQLite `Change` (HMAC chain) with `AuditEvent`; rollback/reapply is in Django admin (gated by `CATALOG_ROLLBACKERS`, else catalogers). AutoRebuild still reads Postgres `public.changelog` SQL for author/title rebuilds. Do **not** leave the old PHP `/catalog/admin/` on the public site after cutover.
+
+**Languages** and **LoC Classes** are first-class catalog entities (same as the original PHP catalog admin) under `/languages/` and `/loccs/`, and as link dropdowns on the book page.
+
+**Mirrors** and **robot blocks** are not in the day-to-day catalog UI; they live in Django admin next to the changelog, gated by `CATALOG_INFRA_ADMINS` (falls back to catalogers if unset).
 
 ## Run locally
 
-Python 3.12. Postgres catalog via `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`
-(same as the other Gutenberg tools). The app needs write access to
-`mn_books_bookshelves`.
+Python 3.12; Postgres catalog via `PGHOST`/`PGPORT`/`PGDATABASE`/`PGUSER` (same as the other Gutenberg tools).
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python manage.py migrate
 .venv/bin/python manage.py createsuperuser
-BSM_REVIEWERS=you@example.org .venv/bin/python manage.py runserver
+CATALOG_APP=catalog CATALOG_CATALOGERS=you@example.org .venv/bin/python manage.py runserver 127.0.0.1:8000
+# separate shell / host:
+CATALOG_APP=shelves CATALOG_SHELF_USERS=you@example.org .venv/bin/python manage.py runserver 127.0.0.1:8001
 ```
 
-The reviewer account email must match `BSM_REVIEWERS`. Copy
-`bsm/settings/local_settings.example.py` to `local_settings.py` to override
-Django settings (email, etc.) without editing the repo.
-
-* http://127.0.0.1:8000/
-* http://127.0.0.1:8000/review/
+In `DEBUG=1`, a superuser can sign in without being on the allowlists; set the account email to match `CATALOG_CATALOGERS` or `CATALOG_SHELF_USERS` for production. Copy `bsm/settings/local_settings.example.py` to `local_settings.py` to override Django settings.
 
 ## systemd
 
-`bookshelf_manager.service` matches the autocat layout: app under
-`/var/lib/bookshelf_manager`, venv next to it, env in `.env`.
+Two units for isolation:
+
+- `catalog_manager.service` — catalog (`CATALOG_APP=catalog`, bind `:8000`, env `.env`)
+- `catalog_manager_shelves.service` — shelves (`CATALOG_APP=shelves`, bind `:8001`, env `.env.shelves`)
 
 ```bash
-sudo cp bookshelf_manager.service /etc/systemd/system/
+sudo cp catalog_manager.service catalog_manager_shelves.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now bookshelf_manager
+sudo systemctl enable --now catalog_manager catalog_manager_shelves
 ```
+
+Point the reverse proxy: catalog vhost → `127.0.0.1:8000`, shelves vhost → `127.0.0.1:8001`. Set `DJANGO_ALLOWED_HOSTS` / `DJANGO_CSRF_TRUSTED_ORIGINS` per env file to that hostname only.

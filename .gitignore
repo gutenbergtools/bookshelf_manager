@@ -4,4 +4,6 @@
 __pycache__/
 staticfiles/
 cache/
+logs/
+apply.log
 bsm/settings/local_settings.py
