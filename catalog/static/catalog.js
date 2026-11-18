@@ -90,3 +90,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (isEditSubmit) event.preventDefault();
   });
 });
+
+
+// MARC fields: Edit opens one inline editor row at a time; Cancel closes it.
+document.addEventListener('click', event => {
+  const toggle = event.target.closest('.attr-toggle');
+  if (!toggle) return;
+  const id = toggle.getAttribute('data-target');
+  const row = document.getElementById(id);
+  if (!row) return;
+  const open = row.hidden;
+  for (const editor of document.querySelectorAll('tr.attr-editor')) editor.hidden = true;
+  row.hidden = !open;
+});
