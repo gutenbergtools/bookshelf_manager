@@ -171,12 +171,27 @@ def books(request):
 def book_detail(request, pk):
     data = _or404(c.book_page(pk), "No such ebook.")
     aq, sq = request.GET.get("aq", "").strip(), request.GET.get("sq", "").strip()
+    hit = getattr(settings, "HIT_PAGE_SIZE", 8)
+    author_hits, apager = (
+        _paged_rows(lambda p: c.search_authors(aq, p, hit), _page_number(request, "apage"), _qs(request, "apage"), "apage", size=hit)
+        if aq
+        else ([], _pager_context(0, 1, size=hit, qs=_qs(request, "apage"), param="apage"))
+    )
+    subject_hits, spager = (
+        _paged_rows(lambda p: c.search_subjects(sq, p, hit), _page_number(request, "spage"), _qs(request, "spage"), "spage", size=hit)
+        if sq
+        else ([], _pager_context(0, 1, size=hit, qs=_qs(request, "spage"), param="spage"))
+    )
     data.update(
         lookups=c.lookups(),
         aq=aq,
         sq=sq,
-        author_hits=c.search_authors(aq, 1)[0][:20] if aq else [],
-        subject_hits=c.search_subjects(sq, 1)[0][:20] if sq else [],
+        author_hits=author_hits,
+        subject_hits=subject_hits,
+        apager=apager,
+        spager=spager,
+        clear_author_qs=_qs(request, "aq", "apage"),
+        clear_subject_qs=_qs(request, "sq", "spage"),
     )
     return render(request, "book.html", data)
 
