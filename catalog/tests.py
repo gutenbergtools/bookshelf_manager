@@ -8,6 +8,7 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from . import changes as ch
+from . import ops as registry
 from .admin import ChangeAdmin
 from .clean import (
     YEAR_MAX,
@@ -165,3 +166,50 @@ class ChangeLogTests(TestCase):
         req.user = denied
         self.assertNotIn("rollback", ma.get_actions(req))
         self.assertFalse(ma.has_change_permission(req))
+
+
+class _ExistsSession:
+    """Fake SQLAlchemy session: every pk exists, roles are cr/aut."""
+
+    def get(self, model, pk):
+        return object()
+
+    def scalars(self, stmt):
+        return self
+
+    def all(self):
+        return ["cr", "aut"]
+
+
+class GuardTests(SimpleTestCase):
+    """Duplicate links and duplicate entities must be denied, like the original catalog admin."""
+
+    def test_duplicate_links_denied(self):
+        session = _ExistsSession()
+        for name, payload in (
+            ("book_subject", {"fk_books": "58890", "fk_subjects": "61"}),
+            ("book_lang", {"fk_books": "58890", "fk_langs": "en"}),
+            ("book_locc", {"fk_books": "58890", "fk_loccs": "PR"}),
+            ("book_category", {"fk_books": "58890", "fk_categories": "9"}),
+        ):
+            with self.assertRaises(Bad):
+                registry.get(name).validate(session, "link", payload, payload)
+        with self.assertRaises(Bad):
+            registry.get("book_author").validate(
+                session,
+                "link",
+                {"fk_books": "58890", "fk_authors": "30", "fk_roles": "cr", "heading": "1"},
+                {"fk_books": 58890, "fk_authors": 30, "fk_roles": "cr", "heading": 1},
+            )
+
+    def test_duplicate_entities_denied(self):
+        session = _ExistsSession()
+        for name, payload in (
+            ("subject", {"pk": "61", "subject": "Fantasy fiction"}),
+            ("category", {"pk": "9", "category": "Drama"}),
+            ("lang", {"pk": "en", "lang": "English"}),
+            ("locc", {"pk": "PR", "locc": "English literature"}),
+            ("author", {"pk": "30", "author": "Carroll, Lewis", "note": ""}),
+        ):
+            with self.assertRaises(Bad):
+                registry.get(name).validate(session, "create", payload, {"pk": payload["pk"]})
