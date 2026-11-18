@@ -15,4 +15,4 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"bsm/settings/__init__.py" = ["F403"]
+"catalog/settings/__init__.py" = ["F403"]

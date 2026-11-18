@@ -2,7 +2,7 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-    dependencies = [("bsm", "0002_remove_change")]
+    dependencies = [("catalog", "0002_remove_change")]
     operations = [
         migrations.CreateModel(
             name="Change",

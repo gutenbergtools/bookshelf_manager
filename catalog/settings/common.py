@@ -53,7 +53,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "bsm",
+    "catalog.apps.CatalogConfig",
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -64,21 +64,21 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "bsm.middleware.SecurityHeadersMiddleware",
+    "catalog.middleware.SecurityHeadersMiddleware",
 ]
-ROOT_URLCONF = "bsm.urls_shelves" if CATALOG_APP == "shelves" else "bsm.urls"
-WSGI_APPLICATION = "bsm.wsgi.application"
+ROOT_URLCONF = "catalog.urls_shelves" if CATALOG_APP == "shelves" else "catalog.urls"
+WSGI_APPLICATION = "catalog.wsgi.application"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "bsm" / "templates"],
+        "DIRS": [BASE_DIR / "catalog" / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                "bsm.middleware.brand",
+                "catalog.middleware.brand",
             ]
         },
     }
@@ -101,7 +101,7 @@ DATABASES = {
         "TEST": {"MIRROR": "default"},
     },
 }
-DATABASE_ROUTERS = ["bsm.db.GutenbergRouter"]
+DATABASE_ROUTERS = ["catalog.db.GutenbergRouter"]
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
@@ -174,7 +174,7 @@ RATE_LOGIN = env_first("CATALOG_RATE_LOGIN", "BSM_RATE_LOGIN", default="10/m")
 RATE_POST = env_first("CATALOG_RATE_POST", "BSM_RATE_POST", default="60/m")
 CATALOG_TRUSTED_PROXIES = env_list_first("CATALOG_TRUSTED_PROXIES", "BSM_TRUSTED_PROXIES", default="127.0.0.1,::1")
 BSM_TRUSTED_PROXIES = CATALOG_TRUSTED_PROXIES  # legacy alias
-RATELIMIT_IP_META_KEY = "bsm.proxy.client_ip"
+RATELIMIT_IP_META_KEY = "catalog.proxy.client_ip"
 CATALOG_REVIEWERS = env_list_first("CATALOG_REVIEWERS", "BSM_REVIEWERS")
 CATALOG_CATALOGERS = env_list_first("CATALOG_CATALOGERS", "BSM_CATALOGERS")
 CATALOG_SHELF_USERS = env_list_first("CATALOG_SHELF_USERS", "BSM_SHELF_USERS")

@@ -2,5 +2,5 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-    dependencies = [("bsm", "0001_initial")]
+    dependencies = [("catalog", "0001_initial")]
     operations = [migrations.DeleteModel(name="Change")]

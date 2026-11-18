@@ -159,7 +159,7 @@ class ChangeLogTests(TestCase):
         self.assertFalse(can_rollback(denied))
         self.assertTrue(can_manage_infra(allowed))
         self.assertFalse(can_manage_infra(denied))
-        req = RequestFactory().get("/admin/bsm/change/")
+        req = RequestFactory().get("/admin/catalog/change/")
         req.user = allowed
         self.assertIn("rollback", ma.get_actions(req))
         req.user = denied

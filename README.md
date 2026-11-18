@@ -28,7 +28,7 @@ CATALOG_APP=catalog CATALOG_CATALOGERS=you@example.org .venv/bin/python manage.p
 CATALOG_APP=shelves CATALOG_SHELF_USERS=you@example.org .venv/bin/python manage.py runserver 127.0.0.1:8001
 ```
 
-In `DEBUG=1`, a superuser can sign in without being on the allowlists; set the account email to match `CATALOG_CATALOGERS` or `CATALOG_SHELF_USERS` for production. Copy `bsm/settings/local_settings.example.py` to `local_settings.py` to override Django settings.
+In `DEBUG=1`, a superuser can sign in without being on the allowlists; set the account email to match `CATALOG_CATALOGERS` or `CATALOG_SHELF_USERS` for production. Copy `catalog/settings/local_settings.example.py` to `local_settings.py` to override Django settings.
 
 ## systemd
 

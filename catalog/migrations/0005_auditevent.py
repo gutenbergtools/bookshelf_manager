@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("bsm", "0004_change_rollback_meta"),
+        ("catalog", "0004_change_rollback_meta"),
     ]
 
     operations = [

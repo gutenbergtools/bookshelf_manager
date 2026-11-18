@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("bsm", "0005_auditevent"),
+        ("catalog", "0005_auditevent"),
     ]
 
     operations = [

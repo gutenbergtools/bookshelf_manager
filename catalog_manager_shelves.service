@@ -13,7 +13,7 @@ ExecStartPre=-/usr/bin/mkdir -p /var/run/catalog_manager_shelves
 ExecStart=/var/lib/catalog_manager/.venv/bin/gunicorn \
     --bind 127.0.0.1:8001 \
     --workers 2 \
-    bsm.wsgi:application
+    catalog.wsgi:application
 LimitNOFILE=infinity
 
 [Install]
