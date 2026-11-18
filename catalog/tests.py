@@ -81,18 +81,10 @@ class ChangeLogTests(TestCase):
         )
         data.update(kwargs)
         row = Change.objects.create(**data)
-        row.digest = ch._digest(ch._last_digest(row.id), row)
-        row.save(update_fields=["digest"])
         return row
 
     def test_no_postgres_ddl(self):
         self.assertNotIn("CREATE TABLE", inspect.getsource(ch))
-
-    def test_hmac_digest(self):
-        row = self._row()
-        self.assertTrue(ch._verify(row))
-        row.after = {"pk": 99}
-        self.assertFalse(ch._verify(row))
 
     def test_restore_many_stops(self):
         seen = []

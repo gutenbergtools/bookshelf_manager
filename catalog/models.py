@@ -70,7 +70,6 @@ class Change(models.Model):
     restores_id = models.BigIntegerField(null=True, blank=True)
     rolled_back_by = models.CharField(max_length=80, blank=True, default="")
     rolled_back_at = models.DateTimeField(null=True, blank=True)
-    digest = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)
 

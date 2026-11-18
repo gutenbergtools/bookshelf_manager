@@ -1,11 +1,7 @@
 """Apply catalog edits immediately; log them in Django/SQLite for rollback."""
 
-import hashlib
-import hmac
-import json
 import logging
 
-from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 from sqlalchemy import func
@@ -17,39 +13,6 @@ from .clean import Bad, jsonable
 from .models import AuditEvent, Change, actor_name, can_rollback, can_use_op
 
 log = logging.getLogger(__name__)
-
-
-def _dump(value):
-    return json.dumps(jsonable(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def _digest(prev, row):
-    payload = _dump(
-        {
-            "id": int(row.id),
-            "op": row.op,
-            "action": row.action,
-            "target": row.target,
-            "before": row.before,
-            "after": row.after,
-            "actor": row.actor,
-            "applied_by": row.applied_by or None,
-            "restores_id": row.restores_id,
-            "processed_at": row.processed_at.isoformat() if row.processed_at else None,
-        }
-    )
-    return hmac.new(settings.SECRET_KEY.encode(), ((prev or "") + "|" + payload).encode(), hashlib.sha256).hexdigest()
-
-
-def _last_digest(before_id=None):
-    qs = Change.objects.exclude(digest="").order_by("-id")
-    if before_id is not None:
-        qs = qs.filter(id__lt=before_id)
-    return qs.values_list("digest", flat=True).first() or ""
-
-
-def _verify(row):
-    return bool(row.digest) and hmac.compare_digest(_digest(_last_digest(row.id), row), row.digest)
 
 
 def _compat(session, who, sql):
@@ -72,8 +35,6 @@ def _record(op, action, before, after, who):
         applied_by=who,
         processed_at=timezone.now(),
     )
-    row.digest = _digest(_last_digest(row.id), row)
-    row.save(update_fields=["digest"])
     _audit(AuditEvent.APPLY, who, row)
     return row
 
@@ -130,8 +91,6 @@ def restore(user, pk):
         raise PermissionDenied
     if not can_rollback(user):
         raise PermissionDenied
-    if not _verify(row):
-        raise Bad("This changelog row failed its integrity check. It will not be restored.")
     undo = row.status == Change.APPLIED
     expected = row.after if undo else row.before
     with c.session() as session:
