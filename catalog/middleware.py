@@ -8,8 +8,10 @@ class SecurityHeadersMiddleware:
     def __call__(self, request):
         response = self.get_response(request)
         response["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';"
+            " object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         )
+        response["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         return response
 
 

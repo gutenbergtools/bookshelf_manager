@@ -213,3 +213,17 @@ class GuardTests(SimpleTestCase):
         ):
             with self.assertRaises(Bad):
                 registry.get(name).validate(session, "create", payload, {"pk": payload["pk"]})
+
+
+class HeaderTests(SimpleTestCase):
+    """Every response carries the CSP and Permissions-Policy headers (OWASP baseline)."""
+
+    def test_security_headers(self):
+        response = self.client.get("/login/")
+        csp = response["Content-Security-Policy"]
+        self.assertIn("default-src 'self'", csp)
+        self.assertIn("object-src 'none'", csp)
+        self.assertIn("base-uri 'self'", csp)
+        self.assertIn("form-action 'self'", csp)
+        self.assertIn("frame-ancestors 'none'", csp)
+        self.assertEqual(response["Permissions-Policy"], "camera=(), microphone=(), geolocation=()")
