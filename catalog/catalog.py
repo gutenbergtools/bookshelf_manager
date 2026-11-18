@@ -278,7 +278,7 @@ def linked(session, table, book_pk, other_field, other_pk, extras=None):
     return session.execute(select(table).where(and_(*cond))).mappings().first()
 
 
-def list_simple(model, pk_attr, label_attr, query, page, pk_is_str=False):
+def list_simple(model, pk_attr, label_attr, query, page, pk_is_str=False, size=None):
     pkcol, label = getattr(model, pk_attr), getattr(model, label_attr)
     stmt = select(pkcol.label("pk"), label.label("name"))
     if query:
@@ -290,7 +290,7 @@ def list_simple(model, pk_attr, label_attr, query, page, pk_is_str=False):
         else:
             stmt = stmt.where(label.ilike(pattern, escape="\\"))
     with session() as s:
-        return g._paginate(stmt.order_by(label), s, page)
+        return g._paginate(stmt.order_by(label), s, page, size)
 
 
 def search_categories(q, p=1):
@@ -305,8 +305,8 @@ def search_loccs(q, p=1):
     return list_simple(_m().Locc, "id", "locc", q, p, True)
 
 
-def search_subjects(q, p=1):
-    return list_simple(_m().Subject, "id", "subject", q, p)
+def search_subjects(q, p=1, size=None):
+    return list_simple(_m().Subject, "id", "subject", q, p, size=size)
 
 
 def simple_entity(model, pk_attr, label_attr, pk, str_pk=False):
