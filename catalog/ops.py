@@ -119,8 +119,7 @@ class Op:
         return live is None if expected is None else live is not None and jsonable(live) == jsonable(expected)
 
 
-def _m():
-    return g._models()
+_m = g._models
 
 
 def _ids(session, column, where=None):
@@ -159,6 +158,14 @@ def apply_row(session, model, action, after, values, pk_attr="pk"):
     return after
 
 
+def link_apply(session, table, linking, keys, values=None):
+    """Insert a link row (idempotent) or delete it by its key columns."""
+    if linking:
+        session.execute(insert(table).values(**keys, **(values or {})).on_conflict_do_nothing())
+    else:
+        session.execute(delete(table).where(and_(*(getattr(table.c, key) == value for key, value in keys.items()))))
+
+
 def snap_pk(getter):
     def snapshot(session, data):
         raw = str(data.get("pk") or "").strip()
@@ -194,14 +201,8 @@ def _shelf_val(session, action, data, before):
 
 
 def _shelf_apply(session, action, before, after):
-    mem = _m().t_mn_books_bookshelves
     keys = dict(fk_books=after["book_pk"], fk_bookshelves=after["shelf_pk"])
-    if after["on"]:
-        session.execute(insert(mem).values(**keys).on_conflict_do_nothing())
-    else:
-        session.execute(
-            delete(mem).where(mem.c.fk_books == after["book_pk"], mem.c.fk_bookshelves == after["shelf_pk"])
-        )
+    link_apply(session, _m().t_mn_books_bookshelves, after["on"], keys)
     return after
 
 
@@ -437,19 +438,7 @@ def add_link(name, table_fn, field, other_name, exists, other_field=None):
         return {"fk_books": data["fk_books"], field: data[field]}
 
     def apply(session, action, before, after):
-        table = table_fn()
-        keys = {"fk_books": after["fk_books"], field: after[field]}
-        if action == "link":
-            session.execute(insert(table).values(**keys).on_conflict_do_nothing())
-        else:
-            session.execute(
-                delete(table).where(
-                    and_(
-                        table.c.fk_books == after["fk_books"],
-                        getattr(table.c, field) == after[field],
-                    )
-                )
-            )
+        link_apply(session, table_fn(), action == "link", {"fk_books": after["fk_books"], field: after[field]})
         return after
 
     Op(
@@ -551,39 +540,16 @@ def _ba_val(session, action, data, before):
 
 def _ba_apply(session, action, before, after):
     table = _m().BookAuthor.__table__
-    if action == "link":
-        session.execute(
-            insert(table)
-            .values(
-                fk_books=after["fk_books"],
-                fk_authors=after["fk_authors"],
-                fk_roles=after["fk_roles"],
-                heading=after["heading"],
-            )
-            .on_conflict_do_nothing()
+    keys = {"fk_books": after["fk_books"], "fk_authors": after["fk_authors"], "fk_roles": after["fk_roles"]}
+    if action == "update":
+        where = and_(
+            table.c.fk_books == after["fk_books"],
+            table.c.fk_authors == after["fk_authors"],
+            table.c.fk_roles == (before or after)["fk_roles"],
         )
-    elif action == "update":
-        session.execute(
-            table.update()
-            .where(
-                and_(
-                    table.c.fk_books == after["fk_books"],
-                    table.c.fk_authors == after["fk_authors"],
-                    table.c.fk_roles == (before or after)["fk_roles"],
-                )
-            )
-            .values(fk_roles=after["fk_roles"], heading=after["heading"])
-        )
+        session.execute(table.update().where(where).values(fk_roles=after["fk_roles"], heading=after["heading"]))
     else:
-        session.execute(
-            delete(table).where(
-                and_(
-                    table.c.fk_books == after["fk_books"],
-                    table.c.fk_authors == after["fk_authors"],
-                    table.c.fk_roles == after["fk_roles"],
-                )
-            )
-        )
+        link_apply(session, table, action == "link", keys, {"heading": after["heading"]})
     return after
 
 

@@ -27,7 +27,7 @@ def _session():
         session.close()
 
 
-def _page(stmt, session, page, size=None):
+def _paginate(stmt, session, page, size=None):
     page = max(1, int(page or 1))
     size = max(1, int(size or settings.PAGE_SIZE))
     total = session.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
@@ -48,9 +48,9 @@ def _titles(rows):
 def _book_query(query):
     cat = _models().t_v_appserver_books_4
     return (
-        (cat, cat.c.pk == int(query))
+        cat.c.pk == int(query)
         if str(query).isdigit()
-        else (cat, cat.c.tsvec.op("@@")(func.websearch_to_tsquery("english", query)))
+        else cat.c.tsvec.op("@@")(func.websearch_to_tsquery("english", query))
     )
 
 
@@ -80,7 +80,7 @@ def shelves(query="", page=1):
             else shelf.tsvec.op("@@")(func.websearch_to_tsquery("english", query))
         )
     with _session() as session:
-        return _page(stmt, session, page)
+        return _paginate(stmt, session, page)
 
 
 def shelf(pk):
@@ -148,19 +148,19 @@ def shelf_books(shelf_pk, query="", page=1, also=()):
     if extra:
         cond = or_(cond, cat.c.pk.in_(extra))
     if query:
-        cond = and_(cond, _book_query(query)[1])
+        cond = and_(cond, _book_query(query))
     with _session() as session:
-        rows, total = _page(_books_stmt(cond), session, page)
+        rows, total = _paginate(_books_stmt(cond), session, page)
     return _titles(rows), total
 
 
 def search_books(query, page=1, size=None):
     if not query:
         return [], 0
-    _cat, match = _book_query(query)
     cat = _models().t_v_appserver_books_4
+    match = _book_query(query)
     with _session() as session:
-        rows, total = _page(_books_stmt(match).order_by(cat.c.downloads.desc()), session, page, size)
+        rows, total = _paginate(_books_stmt(match).order_by(cat.c.downloads.desc()), session, page, size)
     return _titles(rows), total
 
 
@@ -168,5 +168,5 @@ def recent_books(page=1):
     """Default Books listing: newest ebook numbers first."""
     cat = _models().t_v_appserver_books_4
     with _session() as session:
-        rows, total = _page(_books_stmt(True).order_by(cat.c.pk.desc()), session, page)
+        rows, total = _paginate(_books_stmt(True).order_by(cat.c.pk.desc()), session, page)
     return _titles(rows), total

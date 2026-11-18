@@ -23,11 +23,11 @@ def _num(raw, default):
     return int(raw) if re.fullmatch(r"[+-]?\d+", str(raw).strip()) else default
 
 
-def _page(request, key="page"):
+def _page_number(request, key="page"):
     return max(1, _num(request.GET.get(key) or 1, 1))
 
 
-def _pager(total, page, size=None, qs="", param="page"):
+def _pager_context(total, page, size=None, qs="", param="page"):
     size = size or settings.PAGE_SIZE
     pages = max(1, -(-total // size))
     page = min(max(1, page), pages)
@@ -50,12 +50,12 @@ def _qs(request, *drop):
     return query.urlencode()
 
 
-def _paged(fetch, page, qs="", param="page", size=None):
+def _paged_rows(fetch, page, qs="", param="page", size=None):
     rows, total = fetch(page)
-    pager = _pager(total, page, size=size, qs=qs, param=param)
+    pager = _pager_context(total, page, size=size, qs=qs, param=param)
     if pager["page"] != page:
         rows, total = fetch(pager["page"])
-        pager = _pager(total, pager["page"], size=size, qs=qs, param=param)
+        pager = _pager_context(total, pager["page"], size=size, qs=qs, param=param)
     return rows, pager
 
 
@@ -89,7 +89,7 @@ def _shelf(pk):
 
 def _listing(request, fetch, template, key, extra=None):
     query = request.GET.get("q", "").strip()
-    rows, pager = _paged(lambda p: fetch(query, p), _page(request), _qs(request, "page"))
+    rows, pager = _paged_rows(lambda p: fetch(query, p), _page_number(request), _qs(request, "page"))
     context = {key: rows, "q": query, "pager": pager}
     context.update(extra or {})
     return render(request, template, context)
@@ -115,12 +115,12 @@ def shelf_list(request):
 def shelf_detail(request, pk):
     shelf = _shelf(pk)
     query = request.GET.get("q", "").strip()
-    books, pager = _paged(lambda p: g.shelf_books(pk, query, p), _page(request), _qs(request, "page"))
+    books, pager = _paged_rows(lambda p: g.shelf_books(pk, query, p), _page_number(request), _qs(request, "page"))
     aq = request.GET.get("aq", "").strip()
     candidates, apager = (
-        _paged(lambda p: g.search_books(aq, p), _page(request, "apage"), _qs(request, "apage"), "apage")
+        _paged_rows(lambda p: g.search_books(aq, p), _page_number(request, "apage"), _qs(request, "apage"), "apage")
         if aq
-        else ([], _pager(0, 1, qs=_qs(request, "apage"), param="apage"))
+        else ([], _pager_context(0, 1, qs=_qs(request, "apage"), param="apage"))
     )
     live = g.members(pk, [book["pk"] for book in candidates]) if aq else set()
     for book in candidates:
@@ -212,18 +212,18 @@ def author_detail(request, pk):
     bq = request.GET.get("bq", "").strip()
     hit = getattr(settings, "HIT_PAGE_SIZE", 8)
     if bq:
-        book_hits, bpager = _paged(
-            lambda p: c.search_books(bq, p, hit), _page(request, "bpage"), _qs(request, "bpage"), "bpage", size=hit
+        book_hits, bpager = _paged_rows(
+            lambda p: c.search_books(bq, p, hit), _page_number(request, "bpage"), _qs(request, "bpage"), "bpage", size=hit
         )
     else:
-        book_hits, bpager = [], _pager(0, 1, size=hit, qs=_qs(request, "bpage"), param="bpage")
+        book_hits, bpager = [], _pager_context(0, 1, size=hit, qs=_qs(request, "bpage"), param="bpage")
     if tq:
-        rows, tpager = _paged(
-            lambda p: c.search_authors(tq, p, hit), _page(request, "tpage"), _qs(request, "tpage"), "tpage", size=hit
+        rows, tpager = _paged_rows(
+            lambda p: c.search_authors(tq, p, hit), _page_number(request, "tpage"), _qs(request, "tpage"), "tpage", size=hit
         )
         targets = [row for row in rows if row["pk"] != pk]
     else:
-        targets, tpager = [], _pager(0, 1, size=hit, qs=_qs(request, "tpage"), param="tpage")
+        targets, tpager = [], _pager_context(0, 1, size=hit, qs=_qs(request, "tpage"), param="tpage")
     data.update(
         lookups=c.lookups(),
         tq=tq,
@@ -356,22 +356,22 @@ def reports(request):
         "uses": [],
         "usage": [],
         "rows": [],
-        "pager": _pager(0, 1),
+        "pager": _pager_context(0, 1),
         "marc_name": "",
     }
     if show == "empty":
         qs = urlencode({"show": "empty"})
-        context["rows"], context["pager"] = _paged(lambda p: c.empty_authors(p), _page(request), qs)
+        context["rows"], context["pager"] = _paged_rows(lambda p: c.empty_authors(p), _page_number(request), qs)
     elif show == "marc":
         context["usage"] = c.attrib_usage()
         if attribute.isdigit():
             context["marc_name"] = c.attrib_name(int(attribute)) or ""
         if context["marc_name"]:
             qs = urlencode({"show": "marc", "attribute": attribute})
-            context["uses"], context["pager"] = _paged(lambda p: c.attrib_uses(int(attribute), p), _page(request), qs)
+            context["uses"], context["pager"] = _paged_rows(lambda p: c.attrib_uses(int(attribute), p), _page_number(request), qs)
     else:
         qs = urlencode({"show": "lacking", "days": days})
-        context["rows"], context["pager"] = _paged(lambda p: c.lacking_subject_locc(p, days), _page(request), qs)
+        context["rows"], context["pager"] = _paged_rows(lambda p: c.lacking_subject_locc(p, days), _page_number(request), qs)
     return render(request, "reports.html", context)
 
 

@@ -1,21 +1,8 @@
-from sqlalchemy import (
-    Column,
-    Integer,
-    MetaData,
-    String,
-    Text,
-    and_,
-    exists,
-    func,
-    or_,
-    select,
-)
+from sqlalchemy import and_, exists, func, or_, select
 
 from . import gutenberg as g
 from .clean import like_pattern
 
-_extra = MetaData()
-C, I, S, T = Column, Integer, String, Text
 session = g._session
 _m = g._models
 
@@ -119,7 +106,7 @@ def search_authors(query, page=1, size=None):
             )
         )
     with session() as s:
-        return g._page(stmt.order_by(m.Author.name), s, page, size)
+        return g._paginate(stmt.order_by(m.Author.name), s, page, size)
 
 
 def search_books(query, page=1, size=None):
@@ -302,7 +289,7 @@ def list_simple(model, pk_attr, label_attr, query, page, pk_is_str=False):
         else:
             stmt = stmt.where(label.ilike(pattern, escape="\\"))
     with session() as s:
-        return g._page(stmt.order_by(label), s, page)
+        return g._paginate(stmt.order_by(label), s, page)
 
 
 def search_categories(q, p=1):
@@ -427,7 +414,7 @@ def empty_authors(page=1):
         .order_by(m.Author.name, m.Author.id)
     )
     with session() as s:
-        return g._page(stmt, s, page)
+        return g._paginate(stmt, s, page)
 
 
 def lacking_subject_locc(page=1, days=0):
@@ -461,7 +448,7 @@ def lacking_subject_locc(page=1, days=0):
     if days:
         stmt = stmt.join(book, book.pk == attr.fk_books).where(book.release_date >= func.current_date() - int(days))
     with session() as s:
-        return g._page(stmt, s, page)
+        return g._paginate(stmt, s, page)
 
 
 def attrib_usage():
@@ -484,7 +471,7 @@ def attrib_uses(pk, page=1):
         .order_by(m.Attribute.fk_books, m.Attribute.pk)
     )
     with session() as s:
-        return g._page(stmt, s, page)
+        return g._paginate(stmt, s, page)
 
 
 def attrib_name(pk):
