@@ -72,8 +72,8 @@ class IndicatorsField(forms.CharField):
         super().__init__(**kwargs)
 
     def clean(self, value):
-        raw = "" if value is None else str(value).strip()
-        if not raw:
+        raw = "" if value is None else str(value)
+        if not raw.strip():
             return "  "
         if not re.fullmatch(r"[0-9a-zA-Z #]{2}", raw):
             raise ValidationError("MARC indicators must be exactly two characters.")

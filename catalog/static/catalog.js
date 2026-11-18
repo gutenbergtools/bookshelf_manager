@@ -34,10 +34,11 @@ document.addEventListener('DOMContentLoaded', () => {
     return JSON.stringify([...new FormData(clone)].sort());
   };
   const baseline = new Map();
-  const hasUnsavedChanges = () =>
-    [...document.querySelectorAll('form[method="post"]')].some(
-      form => !form.dataset.sent && baseline.has(form) && baseline.get(form) !== snapshot(form)
-    );
+  const dirtyForms = new Set();
+  // Warn only on edits the user actually made in this visit. Comparing values
+  // against a baseline also trips on browser-restored state, which is why a
+  // plain Enter in a search box used to nag about unsaved changes.
+  const hasUnsavedChanges = () => [...dirtyForms].some(form => !form.dataset.sent);
   const syncSaveButton = form => {
     const button = form.querySelector('button.save');
     if (!button) return;
@@ -59,6 +60,8 @@ document.addEventListener('DOMContentLoaded', () => {
       form.addEventListener('input', () => syncSaveButton(form));
       form.addEventListener('change', () => syncSaveButton(form));
     }
+    form.addEventListener('input', () => dirtyForms.add(form));
+    form.addEventListener('change', () => dirtyForms.add(form));
   }
   syncAll();
   // Chrome restores edited values on back/forward without firing input events.
