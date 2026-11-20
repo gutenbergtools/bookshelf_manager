@@ -39,13 +39,23 @@ document.addEventListener('DOMContentLoaded', () => {
   // against a baseline also trips on browser-restored state, which is why a
   // plain Enter in a search box used to nag about unsaved changes.
   const hasUnsavedChanges = () => [...dirtyForms].some(form => !form.dataset.sent);
+  const show = (el, on) => {
+    const wasHidden = el.style.display === 'none';
+    el.style.display = on ? '' : 'none';
+    if (on && wasHidden && el.animate) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120 });
+  };
   const syncSaveButton = form => {
+    // Compare values, not "was touched": toggling a checkbox back to its saved
+    // state must hide Save and Cancel again.
+    const dirty = baseline.get(form) !== snapshot(form);
+    if (dirty) dirtyForms.add(form);
+    else dirtyForms.delete(form);
     const button = form.querySelector('button.save');
-    if (button) button.style.display = baseline.get(form) !== snapshot(form) ? '' : 'none';
+    if (button) show(button, dirty);
     // Row-level Cancel joins Save only when there is an actual edit to undo.
     // The MARC editor Cancel stays available so it can close the editor too.
     for (const cancel of form.querySelectorAll('button.cancel:not(.attr-toggle)')) {
-      cancel.style.display = dirtyForms.has(form) ? '' : 'none';
+      show(cancel, dirty);
     }
   };
   const syncAll = () => {
@@ -60,12 +70,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       form.dataset.sent = '1';
     });
-    if (form.querySelector('button.save')) {
-      form.addEventListener('input', () => syncSaveButton(form));
-      form.addEventListener('change', () => syncSaveButton(form));
-    }
-    form.addEventListener('input', () => dirtyForms.add(form));
-    form.addEventListener('change', () => dirtyForms.add(form));
+    form.addEventListener('input', () => syncSaveButton(form));
+    form.addEventListener('change', () => syncSaveButton(form));
   }
   syncAll();
   // Cancel always restores the server-rendered values and clears dirty state.
