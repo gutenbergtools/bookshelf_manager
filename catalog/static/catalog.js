@@ -12,15 +12,20 @@ document.addEventListener('submit', () => {
   sessionStorage.setItem('catalog:scroll', JSON.stringify({ y: scrollY, path: location.pathname }));
 });
 
-window.addEventListener('load', () => {
+// Restore before the first paint: this script is deferred, so the browser has
+// the finished document but has not drawn it yet. Doing it on `load` instead
+// caused the page to flash at the top and then jump down.
+history.scrollRestoration = 'manual';
+{
   const saved = sessionStorage.getItem('catalog:scroll');
-  if (!saved) return;
-  sessionStorage.removeItem('catalog:scroll');
-  try {
-    const { y, path } = JSON.parse(saved);
-    if (path === location.pathname) scrollTo(0, y);
-  } catch (e) {}
-});
+  if (saved) {
+    sessionStorage.removeItem('catalog:scroll');
+    try {
+      const { y, path } = JSON.parse(saved);
+      if (path === location.pathname) scrollTo(0, y);
+    } catch (e) {}
+  }
+}
 
 // Editing is explicit: Save appears only when a form has unsaved changes,
 // Enter never submits an edit form, and each form submits at most once.
