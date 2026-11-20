@@ -1,1 +1,13 @@
-{% if pager.pages > 1 %} <p class="pager"> {% if pager.has_previous %}<a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}=1" title="First page">First</a> <a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}={{ pager.previous }}" title="Previous page">Prev</a>{% endif %} <span>Page {{ pager.page }} of {{ pager.pages }}</span> {% if pager.has_next %}<a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}={{ pager.next }}" title="Next page">Next</a> <a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}={{ pager.pages }}" title="Last page">Last</a>{% endif %} </p> {% endif %}
+{% if pager.pages > 1 %}
+<p class="pager">
+{% if pager.has_previous %}
+<a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}=1" title="First page">First</a>
+<a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}={{ pager.previous }}" title="Previous page">Prev</a>
+{% endif %}
+<span>Page {{ pager.page }} of {{ pager.pages }}</span>
+{% if pager.has_next %}
+<a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}={{ pager.next }}" title="Next page">Next</a>
+<a href="?{{ pager.qs }}{% if pager.qs %}&amp;{% endif %}{{ pager.param }}={{ pager.pages }}" title="Last page">Last</a>
+{% endif %}
+</p>
+{% endif %}

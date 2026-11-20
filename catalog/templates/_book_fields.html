@@ -1,1 +1,16 @@
-<div class="book-fields"> <label for="pk">EText Nr.</label> {% if book %}<span class="static-value">{{ book.pk }}</span><input type="hidden" name="pk" value="{{ book.pk }}">{% else %}<input id="pk" name="pk" type="text" required maxlength="8" title="Enter the ebook number.">{% endif %} <label for="release_date">Release Date</label> <input id="release_date" name="release_date" type="text" maxlength="20" value="{% if book %}{{ book.release_date }}{% else %}{% now 'Y-m-d' %}{% endif %}" title="Enter the official release date."> <label for="title">Title</label> <input id="title" name="title" type="text" required maxlength="500" value="{% if book %}{{ book.title }}{% endif %}" title="Enter the title."> <label for="copyrighted">Copyrighted</label> <input id="copyrighted" name="copyrighted" type="checkbox" value="1" title="Check if book is copyrighted."{% if book and book.copyrighted %} checked{% endif %}> <input type="hidden" name="updatemode" value="{{ book.updatemode|default:0 }}"> </div>
+<div class="book-fields">
+<label for="pk">EText Nr.</label>
+{% if book %}
+<span class="static-value">{{ book.pk }}</span>
+<input type="hidden" name="pk" value="{{ book.pk }}">
+{% else %}
+<input id="pk" name="pk" type="text" required maxlength="8" title="Enter the ebook number.">
+{% endif %}
+<label for="release_date">Release Date</label>
+<input id="release_date" name="release_date" type="text" maxlength="20" value="{% if book %}{{ book.release_date }}{% else %}{% now 'Y-m-d' %}{% endif %}" title="Enter the official release date.">
+<label for="title">Title</label>
+<input id="title" name="title" type="text" required maxlength="500" value="{% if book %}{{ book.title }}{% endif %}" title="Enter the title.">
+<label for="copyrighted">Copyrighted</label>
+<input id="copyrighted" name="copyrighted" type="checkbox" value="1" title="Check if book is copyrighted."{% if book and book.copyrighted %} checked{% endif %}>
+<input type="hidden" name="updatemode" value="{{ book.updatemode|default:0 }}">
+</div>

@@ -1,1 +1,24 @@
-{% extends "base.html" %} {% block title %}{{ row.name }} - {{ brand }}{% endblock %} {% block content %} <nav class="links-nav" aria-label="Back to list"><a href="{% url list_url %}">All {{ title|lower }}</a></nav> <h1>{{ row.name }}</h1> <p class="sub">{{ kind }} #{{ row.pk }}</p> <form method="post" action="{% url 'change_propose' %}" class="panel box section"> {% include "_post.html" with action="update" %} <input type="hidden" name="pk" value="{{ row.pk }}"> <div class="fields"> {% for name, label, type, maxlen in fields %}<div{% if maxlen > 80 %} class="wide"{% endif %}> <label for="id_{{ name }}">{{ label }}</label> <input id="id_{{ name }}" name="{{ name }}" type="{{ type }}" required maxlength="{{ maxlen }}" value="{% if name == 'pk' %}{{ row.pk }}{% else %}{{ row.name }}{% endif %}"{% if name == 'pk' and op != 'lang' and op != 'locc' %} readonly{% endif %}> </div>{% endfor %} </div> <div class="row"><button class="danger" type="submit" form="delete-form" data-confirm="Delete this {{ op }}?" style="margin-right:auto">Delete</button><button class="save">Save</button> <button type="button" class="cancel">Cancel</button></div> </form> {% include "_delete.html" with pk=row.pk next=list_path %} {% endblock %}
+{% extends "base.html" %} {% block title %}{{ row.name }} - {{ brand }}{% endblock %} {% block content %}
+<nav class="links-nav" aria-label="Back to list">
+<a href="{% url list_url %}">All {{ title|lower }}</a>
+</nav>
+<h1>{{ row.name }}</h1>
+<p class="sub">{{ kind }} #{{ row.pk }}</p>
+<form method="post" action="{% url 'change_propose' %}" class="panel box section">
+{% include "_post.html" with action="update" %}
+<input type="hidden" name="pk" value="{{ row.pk }}">
+<div class="fields">
+{% for name, label, type, maxlen in fields %}
+<div{% if maxlen > 80 %} class="wide"{% endif %}>
+<label for="id_{{ name }}">{{ label }}</label>
+<input id="id_{{ name }}" name="{{ name }}" type="{{ type }}" required maxlength="{{ maxlen }}" value="{% if name == 'pk' %}{{ row.pk }}{% else %}{{ row.name }}{% endif %}"{% if name == 'pk' and op != 'lang' and op != 'locc' %} readonly{% endif %}>
+</div>
+{% endfor %}
+</div>
+<div class="row">
+<button class="danger" type="submit" form="delete-form" data-confirm="Delete this {{ op }}?" style="margin-right:auto">Delete</button>
+<button class="save">Save</button>
+<button type="button" class="cancel">Cancel</button>
+</div>
+</form>
+{% include "_delete.html" with pk=row.pk next=list_path %} {% endblock %}

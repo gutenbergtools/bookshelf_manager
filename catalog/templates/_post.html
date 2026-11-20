@@ -1,1 +1,4 @@
-{% csrf_token %} <input type="hidden" name="op" value="{{ op }}"> <input type="hidden" name="action" value="{{ action }}"> <input type="hidden" name="next" value="{{ next|default:request.get_full_path }}">
+{% csrf_token %}
+<input type="hidden" name="op" value="{{ op }}">
+<input type="hidden" name="action" value="{{ action }}">
+<input type="hidden" name="next" value="{{ next|default:request.get_full_path }}">
