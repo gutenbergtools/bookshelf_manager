@@ -10,11 +10,10 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name="AuditEvent",
+            name="EventLog",
             fields=[
                 ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("created_at", models.DateTimeField(auto_now_add=True, db_index=True)),
-                ("kind", models.CharField(db_index=True, max_length=16)),
                 ("actor", models.CharField(max_length=80)),
                 ("change", models.BigIntegerField(blank=True, db_index=True, null=True)),
                 ("op", models.CharField(max_length=40)),
@@ -26,6 +25,8 @@ class Migration(migrations.Migration):
             ],
             options={
                 "ordering": ["-id"],
+                "verbose_name": "event log entry",
+                "verbose_name_plural": "event log",
             },
         ),
     ]
