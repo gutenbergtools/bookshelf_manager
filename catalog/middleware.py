@@ -19,6 +19,6 @@ def brand(request):
     catalog = settings.CATALOG_APP == "catalog"
     return {
         "is_catalog": catalog,
-        "brand": "Catalog Manager",
+        "brand": "Catalog Manager" if catalog else "Bookshelf Manager",
         "admin_url": settings.ADMIN_URL,
     }
