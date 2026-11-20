@@ -27,15 +27,6 @@ def is_cataloger(user):
     return _listed(user, "CATALOG_CATALOGERS", "BSM_CATALOGERS", "CATALOG_REVIEWERS", "BSM_REVIEWERS")
 
 
-def can_rollback(user):
-    if not getattr(user, "is_authenticated", False):
-        return False
-    if getattr(user, "is_superuser", False):
-        return True
-    emails = _emails("CATALOG_ROLLBACKERS", "BSM_ROLLBACKERS")
-    return (getattr(user, "email", None) or "").lower() in emails if emails else is_cataloger(user)
-
-
 def can_manage_infra(user):
     """Mirrors / robot blocks in Django admin (separate from day-to-day cataloging)."""
     if not getattr(user, "is_authenticated", False):

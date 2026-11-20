@@ -1,4 +1,4 @@
-"""Catalog operations: Django forms for fields, each op has an inverse for restore."""
+"""Catalog operations: forms, validation and persistence for every edit."""
 
 from datetime import date
 
@@ -41,15 +41,6 @@ def get(name):
     return op
 
 
-def invert(action, before, after):
-    return {
-        "create": ("delete", after),
-        "delete": ("create", before),
-        "link": ("unlink", after),
-        "unlink": ("link", after),
-    }.get(action, ("update", before))
-
-
 class Op:
     def __init__(
         self,
@@ -62,7 +53,6 @@ class Op:
         target=None,
         label=None,
         compat_sql=None,
-        invert_fn=None,
         keep=None,
         optional_pk=True,
     ):
@@ -70,7 +60,7 @@ class Op:
         self.fields = tuple(form.base_fields) if form else ()
         self.keep, self.optional_pk = keep, optional_pk
         self._snap, self._val, self._apply = snapshot, validate, apply
-        self._target, self._label, self._sql, self._invert = target, label, compat_sql, invert_fn
+        self._target, self._label, self._sql = target, label, compat_sql
         OPS[name] = self
 
     def parse(self, post):
@@ -111,12 +101,6 @@ class Op:
 
     def compat_sql(self, action, before, after):
         return self._sql(action, before, after) if self._sql else None
-
-    def invert_change(self, action, before, after):
-        return self._invert(action, before, after) if self._invert else invert(action, before, after)
-
-    def live_matches(self, live, expected):
-        return live is None if expected is None else live is not None and jsonable(live) == jsonable(expected)
 
 
 _m = g._models
@@ -799,14 +783,6 @@ Op(
     validate=_xfer_val,
     apply=_xfer_apply,
     target=lambda data, before=None: "author:%s/transfer:%s" % (data.get("fk_authors_from"), data.get("fk_authors_to")),
-    invert_fn=lambda action, before, after: (
-        "update",
-        {
-            "fk_authors_from": after["fk_authors_to"],
-            "fk_authors_to": after["fk_authors_from"],
-            "fk_roles": "same",
-        },
-    ),
     label=lambda a, b, f: (
         "Transfer books from author #%s to #%s" % ((f or b)["fk_authors_from"], (f or b).get("fk_authors_to"))
     ),

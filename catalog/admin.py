@@ -1,12 +1,10 @@
-"""Django admin: changelog (rollback) plus priv-gated mirrors / robot blocks."""
+"""Django admin: read-only event log plus priv-gated mirrors / robot blocks."""
 
 from django.conf import settings
-from django.contrib import admin, messages
-from django.core.exceptions import PermissionDenied
+from django.contrib import admin
 from django.utils import timezone
 
-from . import changes as ch
-from .models import AuditEvent, Change, Mirror, RobotBlock, can_manage_infra, can_rollback, can_use_app
+from .models import AuditEvent, Mirror, RobotBlock, can_manage_infra, can_use_app
 
 admin.site.site_header = "Catalog Manager"
 admin.site.site_title = admin.site.site_header
@@ -41,67 +39,6 @@ class _InfraAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return self.has_module_permission(request)
-
-
-@admin.register(Change)
-class ChangeAdmin(_ReadOnly):
-    list_display = ("id", "processed_at", "actor", "op", "action", "target", "status")
-    list_filter = ("status", "op", "action", "actor")
-    search_fields = ("target", "actor")
-    date_hierarchy = "processed_at"
-    ordering = ("-id",)
-    actions = ("rollback", "reapply")
-
-    def has_change_permission(self, request, obj=None):
-        return can_rollback(request.user)
-
-    def has_view_permission(self, request, obj=None):
-        return can_use_app(request.user)
-
-    def get_actions(self, request):
-        actions = super().get_actions(request)
-        if not can_rollback(request.user):
-            for name in ("rollback", "reapply"):
-                actions.pop(name, None)
-        return actions
-
-    def _run(self, request, queryset, kind):
-        if not can_rollback(request.user):
-            raise PermissionDenied
-        ids = list(
-            queryset.filter(status=Change.APPLIED if kind == "rollback" else Change.ROLLED_BACK).values_list(
-                "id", flat=True
-            )
-        )
-        if not ids:
-            self.message_user(request, "Nothing to %s." % kind, messages.WARNING)
-            return
-        done, failed, err = ch.restore_many(request.user, ids)
-        if failed is None:
-            self.message_user(
-                request,
-                "%s %s change%s."
-                % (
-                    "Rolled back" if kind == "rollback" else "Reapplied",
-                    len(done),
-                    "" if len(done) == 1 else "s",
-                ),
-                messages.SUCCESS,
-            )
-        else:
-            self.message_user(
-                request,
-                "Changed %s, then stopped at #%s: %s" % (len(done), failed, err),
-                messages.ERROR,
-            )
-
-    @admin.action(description="Roll back selected changes")
-    def rollback(self, request, queryset):
-        self._run(request, queryset, "rollback")
-
-    @admin.action(description="Reapply selected changes")
-    def reapply(self, request, queryset):
-        self._run(request, queryset, "reapply")
 
 
 @admin.register(AuditEvent)
