@@ -85,7 +85,7 @@ def author_row(session, pk):
     )
 
 
-def search_authors(query, page=1, size=None):
+def search_authors(query, page=1, size=None, sort=""):
     m = _m()
     stmt = select(
         m.Author.id.label("pk"),
@@ -106,12 +106,18 @@ def search_authors(query, page=1, size=None):
                 )
             )
         )
+    order = {
+        "newest": m.Author.id.desc(),
+        "downloads": m.Author.downloads.desc(),
+    }.get(sort)
+    if order is None:
+        order = m.Author.name
     with session() as s:
-        return g._paginate(stmt.order_by(m.Author.name), s, page, size)
+        return g._paginate(stmt.order_by(order), s, page, size)
 
 
-def search_books(query, page=1, size=None):
-    rows, total = g.search_books(query, page, size)
+def search_books(query, page=1, size=None, sort=""):
+    rows, total = g.search_books(query, page, size, sort=sort)
     if str(query).isdigit():
         pk = int(query)
         if not any(row["pk"] == pk for row in rows):
@@ -278,7 +284,7 @@ def linked(session, table, book_pk, other_field, other_pk, extras=None):
     return session.execute(select(table).where(and_(*cond))).mappings().first()
 
 
-def list_simple(model, pk_attr, label_attr, query, page, pk_is_str=False, size=None):
+def list_simple(model, pk_attr, label_attr, query, page, pk_is_str=False, size=None, sort="", count_table=None, count_field=None):
     pkcol, label = getattr(model, pk_attr), getattr(model, label_attr)
     stmt = select(pkcol.label("pk"), label.label("name"))
     if query:
@@ -289,24 +295,49 @@ def list_simple(model, pk_attr, label_attr, query, page, pk_is_str=False, size=N
             stmt = stmt.where(pkcol.ilike(query) | label.ilike(pattern, escape="\\"))
         else:
             stmt = stmt.where(label.ilike(pattern, escape="\\"))
+    order = label
+    if sort == "books" and count_table is not None:
+        order = (
+            select(func.count())
+            .select_from(count_table)
+            .where(count_table.c[count_field] == pkcol)
+            .scalar_subquery()
+            .desc()
+        )
+    elif sort == "code":
+        order = pkcol
+    elif sort == "newest":
+        order = pkcol.desc()
     with session() as s:
-        return g._paginate(stmt.order_by(label), s, page, size)
+        return g._paginate(stmt.order_by(order), s, page, size)
 
 
-def search_categories(q, p=1):
-    return list_simple(_m().Category, "pk", "category", q, p)
+def search_categories(q, p=1, sort=""):
+    return list_simple(
+        _m().Category, "pk", "category", q, p,
+        sort=sort, count_table=_m().t_mn_books_categories, count_field="fk_categories",
+    )
 
 
-def search_langs(q, p=1):
-    return list_simple(_m().Lang, "id", "language", q, p, True)
+def search_langs(q, p=1, sort=""):
+    return list_simple(
+        _m().Lang, "id", "language", q, p, True,
+        sort=sort, count_table=_m().t_mn_books_langs, count_field="fk_langs",
+    )
 
 
-def search_loccs(q, p=1):
-    return list_simple(_m().Locc, "id", "locc", q, p, True)
+def search_loccs(q, p=1, sort=""):
+    return list_simple(
+        _m().Locc, "id", "locc", q, p, True,
+        sort=sort, count_table=_m().t_mn_books_loccs, count_field="fk_loccs",
+    )
 
 
-def search_subjects(q, p=1, size=None):
-    return list_simple(_m().Subject, "id", "subject", q, p, size=size)
+def search_subjects(q, p=1, size=None, sort=""):
+    return list_simple(
+        _m().Subject, "id", "subject", q, p, size=size,
+        sort=sort, count_table=_m().t_mn_books_subjects, count_field="fk_subjects",
+    )
 
 
 def simple_entity(model, pk_attr, label_attr, pk, str_pk=False):

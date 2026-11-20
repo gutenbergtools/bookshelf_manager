@@ -70,9 +70,14 @@ def _shelf_stmt():
     return shelf, stmt
 
 
-def shelves(query="", page=1):
+def shelves(query="", page=1, sort=""):
     shelf, stmt = _shelf_stmt()
-    stmt = stmt.order_by(shelf.bookshelf)
+    order = {
+        "newest": shelf.id.desc(),
+        "books": func.count(_models().t_mn_books_bookshelves.c.fk_books).desc(),
+        "downloads": shelf.downloads.desc(),
+    }.get(sort)
+    stmt = stmt.order_by(None).order_by(order if order is not None else shelf.bookshelf)
     if query:
         stmt = stmt.where(
             shelf.id == int(query)
@@ -140,7 +145,17 @@ def _books_stmt(cond):
     return select(cat.c.pk, cat.c.title, cat.c.author, cat.c.downloads).where(cond).order_by(cat.c.filing)
 
 
-def shelf_books(shelf_pk, query="", page=1, also=()):
+def _book_order(sort):
+    cat = _models().t_v_appserver_books_4
+    return {
+        "newest": cat.c.pk.desc(),
+        "oldest": cat.c.pk.asc(),
+        "downloads": cat.c.downloads.desc(),
+        "title": cat.c.filing,
+    }.get(sort)
+
+
+def shelf_books(shelf_pk, query="", page=1, also=(), sort=""):
     m = _models()
     cat, mem = m.t_v_appserver_books_4, m.t_mn_books_bookshelves
     cond = cat.c.pk.in_(select(mem.c.fk_books).where(mem.c.fk_bookshelves == shelf_pk))
@@ -149,24 +164,30 @@ def shelf_books(shelf_pk, query="", page=1, also=()):
         cond = or_(cond, cat.c.pk.in_(extra))
     if query:
         cond = and_(cond, _book_query(query))
+    order = _book_order(sort)
+    stmt = _books_stmt(cond).order_by(None).order_by(order if order is not None else cat.c.filing)
     with _session() as session:
-        rows, total = _paginate(_books_stmt(cond), session, page)
+        rows, total = _paginate(stmt, session, page)
     return _titles(rows), total
 
 
-def search_books(query, page=1, size=None):
+def search_books(query, page=1, size=None, sort=""):
     if not query:
         return [], 0
     cat = _models().t_v_appserver_books_4
     match = _book_query(query)
+    order = _book_order(sort)
+    stmt = _books_stmt(match).order_by(None).order_by(order if order is not None else cat.c.downloads.desc())
     with _session() as session:
-        rows, total = _paginate(_books_stmt(match).order_by(cat.c.downloads.desc()), session, page, size)
+        rows, total = _paginate(stmt, session, page, size)
     return _titles(rows), total
 
 
-def recent_books(page=1):
+def recent_books(page=1, sort="newest"):
     """Default Books listing: newest ebook numbers first."""
     cat = _models().t_v_appserver_books_4
+    order = _book_order(sort)
+    stmt = _books_stmt(True).order_by(None).order_by(order if order is not None else cat.c.pk.desc())
     with _session() as session:
-        rows, total = _paginate(_books_stmt(True).order_by(cat.c.pk.desc()), session, page)
+        rows, total = _paginate(stmt, session, page)
     return _titles(rows), total

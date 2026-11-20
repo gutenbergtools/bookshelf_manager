@@ -87,10 +87,36 @@ def _shelf(pk):
     return _or404(g.shelf(pk), "No such bookshelf.")
 
 
-def _listing(request, fetch, template, key, extra=None):
+BOOK_SORTS = [
+    ("newest", "Newest ebook"),
+    ("oldest", "Oldest ebook"),
+    ("downloads", "Most downloaded"),
+    ("title", "Title A–Z"),
+]
+AUTHOR_SORTS = [
+    ("name", "Name A–Z"),
+    ("newest", "Newest added"),
+    ("downloads", "Most downloaded"),
+]
+SHELF_SORTS = [
+    ("name", "Name A–Z"),
+    ("newest", "Newest added"),
+    ("books", "Most books"),
+    ("downloads", "Most downloads"),
+]
+ENTITY_SORTS = {
+    "subject": [("name", "Name A–Z"), ("newest", "Newest added"), ("books", "Most books")],
+    "category": [("name", "Name A–Z"), ("newest", "Newest added"), ("books", "Most books")],
+    "lang": [("name", "Language A–Z"), ("code", "Code A–Z"), ("books", "Most books")],
+    "locc": [("name", "Class name A–Z"), ("code", "Code A–Z"), ("books", "Most books")],
+}
+
+
+def _listing(request, fetch, template, key, extra=None, sorts=None):
     query = request.GET.get("q", "").strip()
-    rows, pager = _paged_rows(lambda p: fetch(query, p), _page_number(request), _qs(request, "page"))
-    context = {key: rows, "q": query, "pager": pager}
+    sort = request.GET.get("sort", "").strip()
+    rows, pager = _paged_rows(lambda p: fetch(query, p, sort), _page_number(request), _qs(request, "page"))
+    context = {key: rows, "q": query, "sort": sort, "sorts": sorts or [], "pager": pager}
     context.update(extra or {})
     return render(request, template, context)
 
@@ -109,13 +135,14 @@ def home(request):
 
 
 def shelf_list(request):
-    return _listing(request, g.shelves, "shelves.html", "shelves")
+    return _listing(request, lambda q, p, sort: g.shelves(q, p, sort=sort), "shelves.html", "shelves", sorts=SHELF_SORTS)
 
 
 def shelf_detail(request, pk):
     shelf = _shelf(pk)
     query = request.GET.get("q", "").strip()
-    books, pager = _paged_rows(lambda p: g.shelf_books(pk, query, p), _page_number(request), _qs(request, "page"))
+    sort = request.GET.get("sort", "").strip()
+    books, pager = _paged_rows(lambda p: g.shelf_books(pk, query, p, sort=sort), _page_number(request), _qs(request, "page"))
     aq = request.GET.get("aq", "").strip()
     candidates, apager = (
         _paged_rows(lambda p: g.search_books(aq, p), _page_number(request, "apage"), _qs(request, "apage"), "apage")
@@ -132,6 +159,8 @@ def shelf_detail(request, pk):
             "shelf": shelf,
             "books": books,
             "q": query,
+            "sort": sort,
+            "sorts": BOOK_SORTS,
             "pager": pager,
             "aq": aq,
             "apage": apager["page"],
@@ -165,7 +194,13 @@ def change_propose(request):
 
 
 def books(request):
-    return _listing(request, lambda q, p: c.search_books(q, p) if q else g.recent_books(p), "books.html", "books")
+    return _listing(
+        request,
+        lambda q, p, sort: c.search_books(q, p, sort=sort) if q else g.recent_books(p, sort=sort),
+        "books.html",
+        "books",
+        sorts=BOOK_SORTS,
+    )
 
 
 def book_detail(request, pk):
@@ -197,7 +232,13 @@ def book_detail(request, pk):
 
 
 def authors(request):
-    return _listing(request, c.search_authors, "authors.html", "authors")
+    return _listing(
+        request,
+        lambda q, p, sort: c.search_authors(q, p, sort=sort),
+        "authors.html",
+        "authors",
+        sorts=AUTHOR_SORTS,
+    )
 
 
 def _etexts(*values):
@@ -349,7 +390,14 @@ def entity(request, name, pk=None):
         "str_pk": meta.get("str_pk", False),
     }
     if pk is None:
-        return _listing(request, meta["search"], "entities.html", "rows", context)
+        return _listing(
+            request,
+            lambda q, p, sort: meta["search"](q, p, sort=sort),
+            "entities.html",
+            "rows",
+            context,
+            sorts=ENTITY_SORTS[name],
+        )
     context.update(
         kind=meta["kind"],
         row=_or404(
