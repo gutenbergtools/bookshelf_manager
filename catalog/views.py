@@ -5,6 +5,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import views as auth
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -80,7 +81,15 @@ def catalog_guard(request):
 
 
 def _cat(view):
-    return login_required(lambda request, *args, **kwargs: (catalog_guard(request), view(request, *args, **kwargs))[1])
+    def guarded(request, *args, **kwargs):
+        catalog_guard(request)
+        # Login already checks this, but an old session must not keep read
+        # access after the user is removed from the cataloger list.
+        if not can_use_app(request.user):
+            raise PermissionDenied
+        return view(request, *args, **kwargs)
+
+    return login_required(guarded)
 
 
 def _shelf(pk):

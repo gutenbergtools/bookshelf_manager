@@ -6,7 +6,7 @@ from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 
 from . import changes as ch
-from .models import AuditEvent, Change, Mirror, RobotBlock, can_manage_infra, can_rollback
+from .models import AuditEvent, Change, Mirror, RobotBlock, can_manage_infra, can_rollback, can_use_app
 
 admin.site.site_header = "Catalog Manager"
 admin.site.site_title = admin.site.site_header
@@ -56,7 +56,7 @@ class ChangeAdmin(_ReadOnly):
         return can_rollback(request.user)
 
     def has_view_permission(self, request, obj=None):
-        return True
+        return can_use_app(request.user)
 
     def get_actions(self, request):
         actions = super().get_actions(request)
@@ -111,6 +111,9 @@ class AuditEventAdmin(_ReadOnly):
     search_fields = ("target", "actor", "note")
     date_hierarchy = "created_at"
     ordering = ("-id",)
+
+    def has_view_permission(self, request, obj=None):
+        return can_use_app(request.user)
 
 
 @admin.register(Mirror)
