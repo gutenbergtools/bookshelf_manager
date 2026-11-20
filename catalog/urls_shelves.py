@@ -30,4 +30,6 @@ urlpatterns = [
         "robots.txt",
         lambda request: HttpResponse("User-agent: *\nDisallow: /\n", content_type="text/plain"),
     ),
+    path("health", lambda request: HttpResponse("ok", content_type="text/plain")),
+    path("health/", lambda request: HttpResponse("ok", content_type="text/plain")),
 ]

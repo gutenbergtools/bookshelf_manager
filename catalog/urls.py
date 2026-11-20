@@ -37,6 +37,8 @@ urlpatterns = [
         "robots.txt",
         lambda request: HttpResponse("User-agent: *\nDisallow: /\n", content_type="text/plain"),
     ),
+    path("health", lambda request: HttpResponse("ok", content_type="text/plain")),
+    path("health/", lambda request: HttpResponse("ok", content_type="text/plain")),
     path("%s/" % settings.ADMIN_URL, admin.site.urls),
 ]
 for _name, _meta in views._ENTITY.items():
