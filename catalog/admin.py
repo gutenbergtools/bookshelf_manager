@@ -4,7 +4,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import AuditEvent, Mirror, RobotBlock, can_manage_infra, can_use_app
+from .models import EventLog, Mirror, RobotBlock, can_manage_infra, can_use_app
 
 admin.site.site_header = "Catalog Manager"
 admin.site.site_title = admin.site.site_header
@@ -41,10 +41,10 @@ class _InfraAdmin(admin.ModelAdmin):
         return self.has_module_permission(request)
 
 
-@admin.register(AuditEvent)
-class AuditEventAdmin(_ReadOnly):
-    list_display = ("id", "created_at", "kind", "actor", "op", "action", "target", "change")
-    list_filter = ("kind", "op", "actor")
+@admin.register(EventLog)
+class EventLogAdmin(_ReadOnly):
+    list_display = ("id", "created_at", "actor", "op", "action", "target", "change")
+    list_filter = ("op", "action", "actor")
     search_fields = ("target", "actor", "note")
     date_hierarchy = "created_at"
     ordering = ("-id",)

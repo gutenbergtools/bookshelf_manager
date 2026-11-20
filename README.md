@@ -11,7 +11,7 @@ One codebase serves two deployments, kept apart by `CATALOG_APP` (legacy alias: 
 
 Each mode runs as its own process on its own hostname, for example `catalog.example.org` on `:8000` and `shelves.example.org` on `:8001`. Cookie names are per mode (`catalog_cat*` on the catalog host, `catalog_shelf*` on the shelves host), so a session from one host cannot be replayed on the other.
 
-Edits go through propose/apply with validated values. Applied rows live in a SQLite `Change` table, with `AuditEvent` rows recording who did what. The Django admin exposes a single read-only event log; editing history cannot be changed or removed from the web interface. AutoRebuild still reads the Postgres `public.changelog` SQL for author/title rebuilds.
+Edits go through propose/apply with validated values. Applied rows live in a SQLite `Change` table, with `EventLog` rows recording who did what. The Django admin exposes a single read-only event log; editing history cannot be changed or removed from the web interface. AutoRebuild still reads the Postgres `public.changelog` SQL for author/title rebuilds.
 
 Do **not** leave the old PHP `/catalog/admin/` on the public site after cutover.
 
@@ -29,7 +29,7 @@ Traffic is throttled: login by real client IP (`CATALOG_TRUSTED_PROXIES` unwraps
 
 Browser and transport hardening: with `DJANGO_SECURE_COOKIES=1`, Secure cookies, an HTTPS redirect and a year of HSTS. Always: HttpOnly, SameSite=Lax session and CSRF cookies, a 12-hour session age (`DJANGO_SESSION_AGE`), CSP (`default-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`), a Permissions-Policy that turns off camera, microphone and geolocation, `X-Frame-Options: DENY`, nosniff, same-origin referrer and opener policy. `DEBUG=0` refuses to start with the development secret key; hosts and origins are pinned per env file. robots.txt plus `noindex` keep it out of search engines.
 
-Integrity: edits apply only after server-side validation, then land in the append-only `Change` table, alongside `AuditEvent` rows naming the actor. The admin event log is read-only; mirrors and robot blocks need `CATALOG_INFRA_ADMINS` (else catalogers).
+Integrity: edits apply only after server-side validation, then land in the append-only `Change` table, alongside `EventLog` rows naming the actor. The admin event log is read-only; mirrors and robot blocks need `CATALOG_INFRA_ADMINS` (else catalogers).
 
 ## Run locally
 

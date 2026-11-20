@@ -64,9 +64,9 @@ class AdminLogTests(TestCase):
     def test_only_event_log_is_registered(self):
         from django.contrib import admin as djadmin
 
-        from .models import AuditEvent, Change
+        from .models import Change, EventLog
 
-        self.assertIn(AuditEvent, djadmin.site._registry)
+        self.assertIn(EventLog, djadmin.site._registry)
         self.assertNotIn(Change, djadmin.site._registry)
 
     def test_infra_gate(self):

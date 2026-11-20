@@ -1,4 +1,4 @@
-"""Apply catalog edits immediately and append them to the audit log."""
+"""Apply catalog edits immediately and append them to the event log."""
 
 import logging
 
@@ -10,7 +10,7 @@ from . import catalog as c
 from . import gutenberg as g
 from . import ops as registry
 from .clean import Bad, jsonable
-from .models import AuditEvent, Change, actor_name, can_use_op
+from .models import Change, EventLog, actor_name, can_use_op
 
 log = logging.getLogger(__name__)
 
@@ -35,13 +35,12 @@ def _record(op, action, before, after, who):
         applied_by=who,
         processed_at=timezone.now(),
     )
-    _audit(AuditEvent.APPLY, who, row)
+    _audit(who, row)
     return row
 
 
-def _audit(kind, who, row, note=""):
-    return AuditEvent.objects.create(
-        kind=kind,
+def _audit(who, row, note=""):
+    return EventLog.objects.create(
         actor=who,
         change=row.pk,
         op=row.op,

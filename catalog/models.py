@@ -68,14 +68,10 @@ class Change(models.Model):
         ordering = ["-id"]
 
 
-class AuditEvent(models.Model):
-    """Append-only trail: every apply, rollback and reapply, with the data needed to rebuild."""
+class EventLog(models.Model):
+    """Append-only record of applied catalog edits, with before/after data."""
 
-    APPLY = "apply"
-    ROLLBACK = "rollback"
-    REAPPLY = "reapply"
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-    kind = models.CharField(max_length=16, db_index=True)
     actor = models.CharField(max_length=80)
     change = models.BigIntegerField(null=True, blank=True, db_index=True)
     op = models.CharField(max_length=40)
@@ -87,9 +83,11 @@ class AuditEvent(models.Model):
 
     class Meta:
         ordering = ["-id"]
+        verbose_name = "event log entry"
+        verbose_name_plural = "event log"
 
     def __str__(self):
-        return "%s %s #%s %s" % (self.kind, self.op, self.change, self.actor)
+        return "%s #%s %s" % (self.op, self.change, self.actor)
 
 
 class Mirror(models.Model):
