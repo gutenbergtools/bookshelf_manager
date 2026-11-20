@@ -134,6 +134,16 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
+// Flash messages are confirmations, not permanent UI: fade them out.
+document.addEventListener('DOMContentLoaded', () => {
+  for (const msg of document.querySelectorAll('.msg')) {
+    setTimeout(() => {
+      msg.classList.add('msg-hide');
+      setTimeout(() => msg.remove(), 400);
+    }, 5000);
+  }
+});
+
 // MARC fields: Edit opens one inline editor row at a time; Cancel closes it.
 document.addEventListener('click', event => {
   const toggle = event.target.closest('.attr-toggle');

@@ -341,6 +341,7 @@ def entity(request, name, pk=None):
     context = {
         "title": meta["title"],
         "op": name,
+        "kind": meta["kind"],
         "fields": meta["fields"],
         "detail": meta["detail_name"],
         "list_url": meta["list_name"],
