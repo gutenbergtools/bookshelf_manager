@@ -273,7 +273,7 @@ def _book_apply(session, action, before, after):
             "updatemode": after.get("updatemode") or 0,
         },
     )
-    if action == "update" and (before or {}).get("title") != after.get("title"):
+    if action == "create" or (action == "update" and (before or {}).get("title") != after.get("title")):
         # books.title is only a cache of the MARC 245 value, so edit the source
         # field too or the trigger would immediately restore the old title.
         result = session.execute(
