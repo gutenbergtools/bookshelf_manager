@@ -1,4 +1,7 @@
+import json
+
 from django import forms
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase
@@ -315,6 +318,34 @@ class BadDataTests(SimpleTestCase):
 
         with self.assertRaises(Bad):
             ch.commit(None, "book", "not-an-action", {})
+
+
+class JobsApiTests(SimpleTestCase):
+    """The jobs API must reject requests before they touch the database."""
+
+    def _post(self, body, token=None):
+        return self.client.post(
+            "/api/jobs/",
+            data=body,
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer " + (settings.JOBS_API_TOKEN if token is None else token),
+        )
+
+    def test_requires_token(self):
+        response = self.client.post("/api/jobs/", data="{}", content_type="application/json")
+        self.assertEqual(response.status_code, 401)
+
+    def test_rejects_bad_token(self):
+        self.assertEqual(self._post("{}", token="nope").status_code, 401)
+
+    def test_rejects_bad_json(self):
+        self.assertEqual(self._post("{").status_code, 400)
+
+    def test_rejects_unknown_job_type(self):
+        self.assertEqual(self._post(json.dumps({"job_type": "nope"})).status_code, 400)
+
+    def test_rejects_non_object_payload(self):
+        self.assertEqual(self._post(json.dumps({"job_type": "git_pull", "payload": []})).status_code, 400)
 
 
 class HeaderTests(SimpleTestCase):

@@ -17,6 +17,7 @@ urlpatterns = [
     path("author/<int:pk>/", views.author_detail, name="author"),
     path("author/<int:pk>/books/", views.author_books_change, name="author_books"),
     path("reports/", views.reports, name="reports"),
+    path("api/jobs/", views.api_jobs, name="api_jobs"),
     path("change/propose/", views.change_propose, name="change_propose"),
     path(
         "password/",

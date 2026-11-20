@@ -102,6 +102,7 @@ DATABASES = {
     },
 }
 DATABASE_ROUTERS = ["catalog.db.GutenbergRouter"]
+MIGRATION_MODULES = {"catalog": None}
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
@@ -172,6 +173,7 @@ PAGE_SIZE = int(env_first("CATALOG_PAGE_SIZE", "BSM_PAGE_SIZE", default="50"))
 HIT_PAGE_SIZE = int(env_first("CATALOG_HIT_PAGE_SIZE", "BSM_HIT_PAGE_SIZE", default="8"))
 RATE_LOGIN = env_first("CATALOG_RATE_LOGIN", "BSM_RATE_LOGIN", default="10/m")
 RATE_POST = env_first("CATALOG_RATE_POST", "BSM_RATE_POST", default="60/m")
+JOBS_API_TOKEN = env("JOBS_API_TOKEN", "demo-token")
 CATALOG_TRUSTED_PROXIES = env_list_first("CATALOG_TRUSTED_PROXIES", "BSM_TRUSTED_PROXIES", default="127.0.0.1,::1")
 BSM_TRUSTED_PROXIES = CATALOG_TRUSTED_PROXIES  # legacy alias
 RATELIMIT_IP_META_KEY = "catalog.proxy.client_ip"

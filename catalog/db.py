@@ -1,6 +1,6 @@
 """Route unmanaged Gutenberg catalog tables to the Postgres alias."""
 
-GUTENBERG = {"mirror", "robotblock"}
+GUTENBERG = {"mirror", "robotblock", "job"}
 
 
 class GutenbergRouter:

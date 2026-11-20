@@ -72,6 +72,35 @@ class Mirror(models.Model):
         return "%s (%s)" % (self.provider, self.id)
 
 
+class Job(models.Model):
+    """Jobs table for cross-host triggers. Managed=False: created by sql/jobs.sql."""
+
+    PENDING = "pending"
+    CLAIMED = "claimed"
+    DONE = "done"
+    FAILED = "failed"
+
+    id = models.BigAutoField(primary_key=True)
+    idempotency_key = models.CharField(max_length=200, unique=True)
+    job_type = models.CharField(max_length=40)
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=16, default=PENDING, db_index=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    claimed_by = models.CharField(max_length=80, blank=True, default="")
+    attempts = models.IntegerField(default=0)
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = "jobs"
+        ordering = ["-id"]
+
+    def __str__(self):
+        return "%s #%s %s" % (self.job_type, self.id, self.status)
+
+
 class RobotBlock(models.Model):
     """Gutenberg robots.blocks — scalar fields only; array columns stay untouched in SQL."""
 

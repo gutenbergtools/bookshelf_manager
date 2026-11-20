@@ -1,3 +1,4 @@
+import json
 import re
 from urllib.parse import urlencode
 
@@ -6,17 +7,19 @@ from django.contrib import messages
 from django.contrib.auth import views as auth
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.http import Http404
+from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
-from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST, require_http_methods
 from django_ratelimit.decorators import ratelimit
 
 from . import catalog as c
 from . import changes as ch
+from . import jobs as jobq
 from .clean import Bad
-from .models import can_use_app
+from .models import Job, can_use_app
 
 
 def _num(raw, default):
@@ -434,6 +437,37 @@ def reports(request):
         qs = urlencode({"show": "lacking", "days": days})
         context["rows"], context["pager"] = _paged_rows(lambda p: c.lacking_subject_locc(p, days), _page_number(request), qs)
     return render(request, "reports.html", context)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+@ratelimit(key="ip", rate=settings.RATE_POST, method="POST", block=True)
+def api_jobs(request):
+    """Token-authenticated job queue API for PGLAF and git hooks."""
+    if not jobq.token_ok(request):
+        return JsonResponse({"error": "unauthorized"}, status=401)
+    if request.method == "GET":
+        rows = list(
+            Job.objects.using("gutenberg")
+            .order_by("-id")[:50]
+            .values("id", "job_type", "status", "attempts", "created_at", "updated_at", "error")
+        )
+        return JsonResponse({"jobs": rows})
+    try:
+        data = json.loads(request.body or b"{}")
+    except ValueError:
+        return JsonResponse({"error": "invalid JSON"}, status=400)
+    job_type = str(data.get("job_type") or "").strip()
+    if job_type not in jobq.JOB_TYPES:
+        return JsonResponse({"error": "unknown job_type"}, status=400)
+    payload = data.get("payload")
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": "payload must be an object"}, status=400)
+    key = str(data.get("idempotency_key") or "").strip()
+    job, created = jobq.enqueue(job_type, payload, key)
+    return JsonResponse({"id": job.id, "status": job.status, "created": created}, status=201 if created else 200)
 
 
 home = login_required(home)
