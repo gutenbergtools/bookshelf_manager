@@ -1,25 +1,14 @@
-"""Django admin: read-only event log plus priv-gated mirrors / robot blocks."""
+"""Django admin: priv-gated mirrors / robot blocks."""
 
 from django.conf import settings
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import EventLog, Mirror, RobotBlock, can_manage_infra, can_use_app
+from .models import Mirror, RobotBlock, can_manage_infra
 
 admin.site.site_header = "Catalog Manager"
 admin.site.site_title = admin.site.site_header
 admin.site.index_title = admin.site.site_header
-
-
-class _ReadOnly(admin.ModelAdmin):
-    def has_add_permission(self, request):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
-        return False
-
-    def get_readonly_fields(self, request, obj=None):
-        return tuple(field.name for field in self.model._meta.fields)
 
 
 class _InfraAdmin(admin.ModelAdmin):
@@ -39,18 +28,6 @@ class _InfraAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return self.has_module_permission(request)
-
-
-@admin.register(EventLog)
-class EventLogAdmin(_ReadOnly):
-    list_display = ("id", "created_at", "actor", "op", "action", "target", "change")
-    list_filter = ("op", "action", "actor")
-    search_fields = ("target", "actor", "note")
-    date_hierarchy = "created_at"
-    ordering = ("-id",)
-
-    def has_view_permission(self, request, obj=None):
-        return can_use_app(request.user)
 
 
 @admin.register(Mirror)

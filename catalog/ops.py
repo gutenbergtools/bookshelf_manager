@@ -8,7 +8,6 @@ from sqlalchemy import and_, delete, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from . import catalog as c
-from . import gutenberg as g
 from .clean import (
     LANG_RE,
     LOCC_RE,
@@ -50,8 +49,6 @@ class Op:
         snapshot=None,
         validate=None,
         apply=None,
-        target=None,
-        label=None,
         compat_sql=None,
         keep=None,
         optional_pk=True,
@@ -60,7 +57,7 @@ class Op:
         self.fields = tuple(form.base_fields) if form else ()
         self.keep, self.optional_pk = keep, optional_pk
         self._snap, self._val, self._apply = snapshot, validate, apply
-        self._target, self._label, self._sql = target, label, compat_sql
+        self._sql = compat_sql
         OPS[name] = self
 
     def parse(self, post):
@@ -86,32 +83,15 @@ class Op:
     def apply(self, session, action, before, after):
         return self._apply(session, action, before, after)
 
-    def target(self, data, before=None):
-        return (
-            self._target(data, before)
-            if self._target
-            else "%s:%s" % (self.name, data.get("pk") or (before or {}).get("pk") or "new")
-        )
-
-    def label(self, action, before, after):
-        if self._label:
-            return self._label(action, before, after)
-        payload = after or before or {}
-        return "%s %s %s" % (action, self.name.replace("_", " "), payload.get("pk") or "")
-
     def compat_sql(self, action, before, after):
         return self._sql(action, before, after) if self._sql else None
 
 
-_m = g._models
+_m = c._models
 
 
 def _ids(session, column, where=None):
     return set(session.scalars(select(column) if where is None else select(column).where(where)).all())
-
-
-def _pk(data, before=None):
-    return data.get("pk") or (before or {}).get("pk")
 
 
 def _pick(row, keys):
@@ -172,9 +152,9 @@ def exists_state(action, before, kind):
 
 
 def _shelf_val(session, action, data, before):
-    if g.shelf(data["shelf_pk"]) is None:
+    if c.shelf(data["shelf_pk"]) is None:
         raise Bad("No such bookshelf.")
-    if g.book_title(data["book_pk"]) is None:
+    if c.book_title(data["book_pk"]) is None:
         raise Bad("No ebook #%s exists in the catalog." % data["book_pk"])
     want = {"link": 1, "unlink": 0}.get(action, data.get("want") or 0)
     if want and before and before.get("on"):
@@ -190,20 +170,6 @@ def _shelf_apply(session, action, before, after):
     return after
 
 
-def _shelf_label(action, before, after):
-    data = after or before
-    verb, prep = ("Add", "to") if data.get("on") else ("Remove", "from")
-    title = g.book_title(data["book_pk"]) or "Untitled"
-    names = g.shelf_names([data["shelf_pk"]])
-    return "%s #%s %s %s “%s”" % (
-        verb,
-        data["book_pk"],
-        title,
-        prep,
-        names.get(data["shelf_pk"]) or "#%s" % data["shelf_pk"],
-    )
-
-
 Op(
     "shelf_member",
     form=ShelfForm,
@@ -211,12 +177,10 @@ Op(
     snapshot=lambda s, d: {
         "shelf_pk": int(d["shelf_pk"]),
         "book_pk": int(d["book_pk"]),
-        "on": int(g.on_shelf(int(d["shelf_pk"]), int(d["book_pk"]))),
+        "on": int(c.on_shelf(int(d["shelf_pk"]), int(d["book_pk"]))),
     },
     validate=_shelf_val,
     apply=_shelf_apply,
-    target=lambda data, before=None: "shelf:%s/book:%s" % (data["shelf_pk"], data["book_pk"]),
-    label=_shelf_label,
 )
 
 
@@ -303,23 +267,6 @@ def _book_sql(action, before, after):
     return None
 
 
-def _book_label(action, before, after):
-    row = after or before or {}
-    if action == "create":
-        return "Create book #%s" % row["pk"]
-    if action == "delete":
-        return "Delete book #%s" % row["pk"]
-    bits = []
-    if (before or {}).get("release_date") != row.get("release_date"):
-        bits.append("release date %s" % row.get("release_date"))
-    if (before or {}).get("title") != row.get("title"):
-        bits.append("title")
-    for key, name in (("copyrighted", "copyrighted"), ("updatemode", "manual update")):
-        if (before or {}).get(key) != row.get(key):
-            bits.append("%s %s" % (name, "on" if row.get(key) else "off"))
-    return "Book #%s: %s" % (row["pk"], ", ".join(bits) or "saved")
-
-
 Op(
     "book",
     form=BookForm,
@@ -328,8 +275,6 @@ Op(
     validate=_book_val,
     apply=_book_apply,
     compat_sql=_book_sql,
-    target=lambda data, before=None: "book:%s" % _pk(data, before),
-    label=_book_label,
 )
 
 
@@ -373,14 +318,6 @@ Op(
     snapshot=snap_pk(c.author_row),
     validate=_author_val,
     apply=_author_apply,
-    target=lambda data, before=None: (
-        "author:%s" % _pk(data, before)
-        if _pk(data, before) not in (None, "")
-        else "author:new:%s" % (data.get("author") or "")[:80]
-    ),
-    label=lambda a, b, f: (
-        "%s author %s" % (a.capitalize(), (f or b or {}).get("author") or "#%s" % (f or b or {}).get("pk"))
-    ),
 )
 
 
@@ -405,12 +342,6 @@ Op(
         f,
         {"fk_authors": f["fk_authors"], "alias": f.get("alias"), "heading": f.get("heading")} if a != "delete" else {},
     ),
-    target=lambda data, before=None: (
-        "alias:%s" % _pk(data, before)
-        if _pk(data, before)
-        else "author:%s/alias:%s" % (data.get("fk_authors"), (data.get("alias") or "")[:40])
-    ),
-    label=lambda a, b, f: "%s alias “%s”" % (a.capitalize(), (f or b).get("alias") or (f or b).get("pk")),
 )
 Op(
     "author_url",
@@ -430,10 +361,6 @@ Op(
         if a != "delete"
         else {},
     ),
-    target=lambda data, before=None: (
-        "author_url:%s" % _pk(data, before) if _pk(data, before) else "author:%s/url:new" % data.get("fk_authors")
-    ),
-    label=lambda a, b, f: "%s author URL" % a.capitalize(),
 )
 
 
@@ -471,23 +398,6 @@ def add_link(name, table_fn, field, other_name, exists, other_field=None):
         snapshot=snapshot,
         validate=validate,
         apply=apply,
-        target=lambda data, before=None: (
-            "book:%s/%s:%s"
-            % (
-                (data if data.get(field) else (before or data)).get("fk_books"),
-                field,
-                (data if data.get(field) else (before or data)).get(field),
-            )
-        ),
-        label=lambda a, b, f: (
-            "Book #%s: %s %s %s"
-            % (
-                (f or b).get("fk_books"),
-                "link" if a == "link" else "unlink",
-                other_name,
-                (f or b).get(field),
-            )
-        ),
     )
 
 
@@ -607,23 +517,6 @@ Op(
     validate=_ba_val,
     apply=_ba_apply,
     compat_sql=_ba_sql,
-    target=lambda data, before=None: (
-        "book:%s/fk_authors:%s/fk_roles:%s"
-        % (
-            (data if data.get("fk_authors") else (before or data)).get("fk_books"),
-            (data if data.get("fk_authors") else (before or data)).get("fk_authors"),
-            (data if data.get("fk_roles") else (before or data)).get("fk_roles"),
-        )
-    ),
-    label=lambda a, b, f: (
-        "Book #%s: %s author #%s (%s)"
-        % (
-            (f or b)["fk_books"],
-            {"link": "link", "unlink": "unlink", "update": "change role of"}.get(a, a),
-            (f or b)["fk_authors"],
-            (f or b).get("fk_roles"),
-        )
-    ),
 )
 
 
@@ -675,19 +568,6 @@ Op(
         if a == "delete" or f.get("fk_attriblist") != 245
         else 'update attributes set  "fk_attriblist" = 245 where pk = %s' % f["pk"]
     ),
-    target=lambda data, before=None: (
-        "attribute:%s" % _pk(data, before)
-        if _pk(data, before)
-        else "book:%s/attribute:new:%s" % (data.get("fk_books"), data.get("fk_attriblist"))
-    ),
-    label=lambda a, b, f: (
-        "Book #%s: %s MARC %s"
-        % (
-            (f or b).get("fk_books"),
-            {"create": "add", "update": "edit", "delete": "delete"}.get(a, a),
-            (f or b).get("fk_attriblist"),
-        )
-    ),
 )
 
 
@@ -724,9 +604,6 @@ def add_entity(name, model, pk_name, label_field, form, str_pk=False):
         snapshot=snapshot,
         validate=validate,
         apply=apply,
-        label=lambda a, b, f: (
-            "%s %s “%s”" % (a.capitalize(), name, (f or b or {}).get(label_field) or (f or b or {}).get("pk"))
-        ),
     )
 
 
@@ -782,8 +659,4 @@ Op(
     },
     validate=_xfer_val,
     apply=_xfer_apply,
-    target=lambda data, before=None: "author:%s/transfer:%s" % (data.get("fk_authors_from"), data.get("fk_authors_to")),
-    label=lambda a, b, f: (
-        "Transfer books from author #%s to #%s" % ((f or b)["fk_authors_from"], (f or b).get("fk_authors_to"))
-    ),
 )

@@ -60,15 +60,7 @@ class CleanTests(SimpleTestCase):
         self.assertRaises(ValidationError, HttpsURLField().clean, "https://localhost/x")
 
 
-class AdminLogTests(TestCase):
-    def test_only_event_log_is_registered(self):
-        from django.contrib import admin as djadmin
-
-        from .models import Change, EventLog
-
-        self.assertIn(EventLog, djadmin.site._registry)
-        self.assertNotIn(Change, djadmin.site._registry)
-
+class AdminTests(TestCase):
     def test_infra_gate(self):
         allowed = User.objects.create(username="ok", email="neo@localhost", is_staff=True, is_superuser=True)
         denied = User.objects.create(username="no", email="other@localhost", is_staff=True)

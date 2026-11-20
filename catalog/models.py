@@ -50,49 +50,6 @@ def can_use_op(user, op):
     return op.domain == "shelves" if settings.CATALOG_APP == "shelves" else True
 
 
-class Change(models.Model):
-    APPLIED = "applied"
-    ROLLED_BACK = "rolled_back"
-    op = models.CharField(max_length=40)
-    action = models.CharField(max_length=16)
-    target = models.CharField(max_length=240, db_index=True)
-    before = models.JSONField(null=True, blank=True)
-    after = models.JSONField(null=True, blank=True)
-    status = models.CharField(max_length=16, default=APPLIED, db_index=True)
-    actor = models.CharField(max_length=80)
-    applied_by = models.CharField(max_length=80, blank=True, default="")
-    restores_id = models.BigIntegerField(null=True, blank=True)
-    rolled_back_by = models.CharField(max_length=80, blank=True, default="")
-    rolled_back_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    processed_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ["-id"]
-
-
-class EventLog(models.Model):
-    """Append-only record of applied catalog edits, with before/after data."""
-
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-    actor = models.CharField(max_length=80)
-    change = models.BigIntegerField(null=True, blank=True, db_index=True)
-    op = models.CharField(max_length=40)
-    action = models.CharField(max_length=16)
-    target = models.CharField(max_length=240)
-    before = models.JSONField(null=True, blank=True)
-    after = models.JSONField(null=True, blank=True)
-    note = models.CharField(max_length=200, blank=True, default="")
-
-    class Meta:
-        ordering = ["-id"]
-        verbose_name = "event log entry"
-        verbose_name_plural = "event log"
-
-    def __str__(self):
-        return "%s #%s %s" % (self.op, self.change, self.actor)
-
-
 class Mirror(models.Model):
     """Gutenberg public.mirrors — edited only via Django admin (infra priv)."""
 

@@ -15,7 +15,6 @@ from django_ratelimit.decorators import ratelimit
 
 from . import catalog as c
 from . import changes as ch
-from . import gutenberg as g
 from .clean import Bad
 from .models import can_use_app
 
@@ -102,7 +101,7 @@ def _cat(view):
 
 
 def _shelf(pk):
-    return _or404(g.shelf(pk), "No such bookshelf.")
+    return _or404(c.shelf(pk), "No such bookshelf.")
 
 
 BOOK_SORTS = [
@@ -153,21 +152,21 @@ def home(request):
 
 
 def shelf_list(request):
-    return _listing(request, lambda q, p, sort: g.shelves(q, p, sort=sort), "shelves.html", "shelves", sorts=SHELF_SORTS)
+    return _listing(request, lambda q, p, sort: c.shelves(q, p, sort=sort), "shelves.html", "shelves", sorts=SHELF_SORTS)
 
 
 def shelf_detail(request, pk):
     shelf = _shelf(pk)
     query = request.GET.get("q", "").strip()
     sort = request.GET.get("sort", "").strip()
-    books, pager = _paged_rows(lambda p: g.shelf_books(pk, query, p, sort=sort), _page_number(request), _qs(request, "page"))
+    books, pager = _paged_rows(lambda p: c.shelf_books(pk, query, p, sort=sort), _page_number(request), _qs(request, "page"))
     aq = request.GET.get("aq", "").strip()
     candidates, apager = (
-        _paged_rows(lambda p: g.search_books(aq, p), _page_number(request, "apage"), _qs(request, "apage"), "apage")
+        _paged_rows(lambda p: c.search_books(aq, p), _page_number(request, "apage"), _qs(request, "apage"), "apage")
         if aq
         else ([], _pager_context(0, 1, qs=_qs(request, "apage"), param="apage"))
     )
-    live = g.members(pk, [book["pk"] for book in candidates]) if aq else set()
+    live = c.members(pk, [book["pk"] for book in candidates]) if aq else set()
     for book in candidates:
         book["on_shelf"] = book["pk"] in live
     return render(
@@ -197,13 +196,11 @@ def _flash(request, result):
 
 def change_propose(request):
     fallback = _back(request, reverse("home"))
+    op_name = request.POST.get("op", "")
+    action = request.POST.get("action", "")
     try:
-        result, row = ch.commit(request.user, request.POST.get("op", ""), request.POST.get("action", ""), request.POST)
-        pk = (
-            (row.after or {}).get("pk")
-            if result == "applied" and row and row.op == "book" and row.action == "create"
-            else None
-        )
+        result, after = ch.commit(request.user, op_name, action, request.POST)
+        pk = after.get("pk") if result == "applied" and op_name == "book" and action == "create" else None
         fallback = reverse("book", args=[pk]) if pk else fallback
         _flash(request, result)
     except Bad as exc:
@@ -214,7 +211,7 @@ def change_propose(request):
 def books(request):
     return _listing(
         request,
-        lambda q, p, sort: c.search_books(q, p, sort=sort) if q else g.recent_books(p, sort=sort),
+        lambda q, p, sort: c.search_books(q, p, sort=sort) if q else c.recent_books(p, sort=sort),
         "books.html",
         "books",
         sorts=BOOK_SORTS,
@@ -259,7 +256,7 @@ def _commit_many(request, op, action, payloads):
     applied, errors = 0, []
     for payload in payloads:
         try:
-            result, _row = ch.commit(request.user, op, action, payload)
+            result, _after = ch.commit(request.user, op, action, payload)
             applied += result == "applied"
         except Bad as exc:
             errors.append(str(exc))
