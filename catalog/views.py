@@ -47,7 +47,8 @@ def _pager_context(total, page, size=None, qs="", param="page"):
 
 def _qs(request, *drop):
     query = request.GET.copy()
-    [query.pop(key, None) for key in drop]
+    for key in drop:
+        query.pop(key, None)
     return query.urlencode()
 
 
@@ -58,6 +59,14 @@ def _paged_rows(fetch, page, qs="", param="page", size=None):
         rows, total = fetch(pager["page"])
         pager = _pager_context(total, pager["page"], size=size, qs=qs, param=param)
     return rows, pager
+
+
+def _hits(request, fetch, term, key, size):
+    """Search result block: an empty term yields no rows and an empty pager."""
+    qs = _qs(request, key)
+    if not term:
+        return [], _pager_context(0, 1, size=size, qs=qs, param=key)
+    return _paged_rows(lambda p: fetch(term, p, size), _page_number(request, key), qs, key, size=size)
 
 
 def _back(request, fallback):
@@ -216,16 +225,8 @@ def book_detail(request, pk):
     data = _or404(c.book_page(pk), "No such ebook.")
     aq, sq = request.GET.get("aq", "").strip(), request.GET.get("sq", "").strip()
     hit = getattr(settings, "HIT_PAGE_SIZE", 8)
-    author_hits, apager = (
-        _paged_rows(lambda p: c.search_authors(aq, p, hit), _page_number(request, "apage"), _qs(request, "apage"), "apage", size=hit)
-        if aq
-        else ([], _pager_context(0, 1, size=hit, qs=_qs(request, "apage"), param="apage"))
-    )
-    subject_hits, spager = (
-        _paged_rows(lambda p: c.search_subjects(sq, p, hit), _page_number(request, "spage"), _qs(request, "spage"), "spage", size=hit)
-        if sq
-        else ([], _pager_context(0, 1, size=hit, qs=_qs(request, "spage"), param="spage"))
-    )
+    author_hits, apager = _hits(request, c.search_authors, aq, "apage", hit)
+    subject_hits, spager = _hits(request, c.search_subjects, sq, "spage", hit)
     data.update(
         lookups=c.lookups(),
         aq=aq,
@@ -276,19 +277,9 @@ def author_detail(request, pk):
     tq = request.GET.get("tq", "").strip()
     bq = request.GET.get("bq", "").strip()
     hit = getattr(settings, "HIT_PAGE_SIZE", 8)
-    if bq:
-        book_hits, bpager = _paged_rows(
-            lambda p: c.search_books(bq, p, hit), _page_number(request, "bpage"), _qs(request, "bpage"), "bpage", size=hit
-        )
-    else:
-        book_hits, bpager = [], _pager_context(0, 1, size=hit, qs=_qs(request, "bpage"), param="bpage")
-    if tq:
-        rows, tpager = _paged_rows(
-            lambda p: c.search_authors(tq, p, hit), _page_number(request, "tpage"), _qs(request, "tpage"), "tpage", size=hit
-        )
-        targets = [row for row in rows if row["pk"] != pk]
-    else:
-        targets, tpager = [], _pager_context(0, 1, size=hit, qs=_qs(request, "tpage"), param="tpage")
+    book_hits, bpager = _hits(request, c.search_books, bq, "bpage", hit)
+    rows, tpager = _hits(request, c.search_authors, tq, "tpage", hit)
+    targets = [row for row in rows if row["pk"] != pk]
     data.update(
         lookups=c.lookups(),
         tq=tq,

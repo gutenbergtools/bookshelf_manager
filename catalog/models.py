@@ -10,11 +10,14 @@ def actor_name(user):
     return (getattr(user, "email", None) or user.get_username() or "")[:80]
 
 
+def _email(user):
+    return (getattr(user, "email", None) or "").lower()
+
+
 def _listed(user, *names):
     if not getattr(user, "is_authenticated", False):
         return False
-    email = (getattr(user, "email", None) or "").lower()
-    if email and email in _emails(*names):
+    if _email(user) in _emails(*names):
         return True
     return bool(settings.DEBUG and getattr(user, "is_superuser", False))
 
@@ -34,7 +37,7 @@ def can_manage_infra(user):
     if getattr(user, "is_superuser", False):
         return True
     emails = _emails("CATALOG_INFRA_ADMINS", "BSM_INFRA_ADMINS")
-    return (getattr(user, "email", None) or "").lower() in emails if emails else is_cataloger(user)
+    return _email(user) in emails if emails else is_cataloger(user)
 
 
 def can_use_app(user):
