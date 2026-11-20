@@ -7,9 +7,18 @@ document.addEventListener('click', event => {
   if (button && !window.confirm(button.getAttribute('data-confirm'))) event.preventDefault();
 });
 
-// Remember scroll position across the post/redirect cycle.
+// Remember scroll position across the post/redirect cycle. Anchor to the
+// nearest heading instead of a pixel offset: adding or removing rows changes
+// the page height, and an absolute offset then lands somewhere else.
 document.addEventListener('submit', () => {
-  sessionStorage.setItem('catalog:scroll', JSON.stringify({ y: scrollY, path: location.pathname }));
+  const marks = [...document.querySelectorAll('main h1, main h2')];
+  const ref = marks.filter(m => m.getBoundingClientRect().top <= 140).pop();
+  sessionStorage.setItem('catalog:scroll', JSON.stringify({
+    y: scrollY,
+    path: location.pathname,
+    ref: ref ? ref.textContent.trim() : null,
+    off: ref ? Math.round(ref.getBoundingClientRect().top) : 0,
+  }));
 });
 
 // Restore before the first paint: this script is deferred, so the browser has
@@ -21,8 +30,13 @@ history.scrollRestoration = 'manual';
   if (saved) {
     sessionStorage.removeItem('catalog:scroll');
     try {
-      const { y, path } = JSON.parse(saved);
-      if (path === location.pathname) scrollTo(0, y);
+      const { y, path, ref, off } = JSON.parse(saved);
+      if (path === location.pathname) {
+        const marks = ref && [...document.querySelectorAll('main h1, main h2')];
+        const target = marks && marks.find(m => m.textContent.trim() === ref);
+        if (target) scrollTo(0, scrollY + target.getBoundingClientRect().top - off);
+        else scrollTo(0, y);
+      }
     } catch (e) {}
   }
 }
