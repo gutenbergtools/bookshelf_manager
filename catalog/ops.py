@@ -4,7 +4,7 @@ from datetime import date
 
 from django import forms
 from django.utils.dateparse import parse_date
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from . import catalog as c
@@ -248,11 +248,20 @@ def _book_val(session, action, data, before):
     return data
 
 
+def refresh_book_title(session, book_pk):
+    """Recompute books.title/nonfiling from MARC 240/245/246.
+
+    The catalogue database derives books.title with a trigger, so touching the
+    row is how a changed MARC title becomes visible.
+    """
+    session.execute(text("update books set title = title where pk = :pk"), {"pk": book_pk})
+
+
 def _book_apply(session, action, before, after):
     parsed = parse_date(str(after.get("release_date") or date.today().isoformat())[:10])
     if parsed is None:
         raise Bad("Enter the official release date.")
-    return apply_row(
+    row = apply_row(
         session,
         _m().Book,
         action,
@@ -264,6 +273,26 @@ def _book_apply(session, action, before, after):
             "updatemode": after.get("updatemode") or 0,
         },
     )
+    if action == "update" and (before or {}).get("title") != after.get("title"):
+        # books.title is only a cache of the MARC 245 value, so edit the source
+        # field too or the trigger would immediately restore the old title.
+        result = session.execute(
+            text(
+                "update attributes set text = :t "
+                "where fk_books = :b and fk_attriblist = 245"
+            ),
+            {"t": after.get("title") or "", "b": after["pk"]},
+        )
+        if not result.rowcount:
+            session.execute(
+                text(
+                    "insert into attributes (fk_books, fk_attriblist, text, nonfiling) "
+                    "values (:b, 245, :t, :n)"
+                ),
+                {"b": after["pk"], "t": after.get("title") or "", "n": after.get("nonfiling") or 0},
+            )
+        refresh_book_title(session, after["pk"])
+    return row
 
 
 def _sql_str(value):
@@ -634,20 +663,29 @@ def _attr_val(session, action, data, before):
     return after
 
 
+def _attr_apply(session, action, before, after):
+    row = apply_row(
+        session,
+        _m().Attribute,
+        action,
+        after,
+        dict((k, after[k]) for k in ("fk_books", "fk_attriblist", "text", "nonfiling", "indicators", "fk_langs"))
+        if action != "delete"
+        else {},
+    )
+    tag = after.get("fk_attriblist") if action != "delete" else (before or {}).get("fk_attriblist")
+    book = after.get("fk_books") or (before or {}).get("fk_books")
+    if book and tag in (240, 245, 246):
+        refresh_book_title(session, book)
+    return row
+
+
 Op(
     "attribute",
     form=AttrForm,
     snapshot=snap_pk(c.attribute_row),
     validate=_attr_val,
-    apply=lambda s, a, b, f: apply_row(
-        s,
-        _m().Attribute,
-        a,
-        f,
-        dict((k, f[k]) for k in ("fk_books", "fk_attriblist", "text", "nonfiling", "indicators", "fk_langs"))
-        if a != "delete"
-        else {},
-    ),
+    apply=_attr_apply,
     compat_sql=lambda a, b, f: (
         None
         if a == "delete" or f.get("fk_attriblist") != 245
