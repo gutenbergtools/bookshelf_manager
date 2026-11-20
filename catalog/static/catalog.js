@@ -1,140 +1,42 @@
-document.addEventListener('change', event => {
-  if (event.target.matches('select[data-autosubmit]')) event.target.form.submit();
-});
-
+// Confirm dialogs and auto-submitting selects.
 document.addEventListener('click', event => {
   const button = event.target.closest('[data-confirm]');
   if (button && !window.confirm(button.getAttribute('data-confirm'))) event.preventDefault();
 });
-
-// Remember scroll position across the post/redirect cycle. Anchor to the
-// nearest heading instead of a pixel offset: adding or removing rows changes
-// the page height, and an absolute offset then lands somewhere else.
-document.addEventListener('submit', () => {
-  const marks = [...document.querySelectorAll('main h1, main h2')];
-  const ref = marks.filter(m => m.getBoundingClientRect().top <= 140).pop();
-  sessionStorage.setItem('catalog:scroll', JSON.stringify({
-    y: scrollY,
-    path: location.pathname,
-    ref: ref ? ref.textContent.trim() : null,
-    off: ref ? Math.round(ref.getBoundingClientRect().top) : 0,
-  }));
+document.addEventListener('change', event => {
+  if (event.target.matches('select[data-autosubmit]')) event.target.form.submit();
 });
 
-// Restore before the first paint: this script is deferred, so the browser has
-// the finished document but has not drawn it yet. Doing it on `load` instead
-// caused the page to flash at the top and then jump down.
-history.scrollRestoration = 'manual';
-{
-  const saved = sessionStorage.getItem('catalog:scroll');
-  if (saved) {
-    sessionStorage.removeItem('catalog:scroll');
-    try {
-      const { y, path, ref, off } = JSON.parse(saved);
-      if (path === location.pathname) {
-        const marks = ref && [...document.querySelectorAll('main h1, main h2')];
-        const target = marks && marks.find(m => m.textContent.trim() === ref);
-        if (target) scrollTo(0, scrollY + target.getBoundingClientRect().top - off);
-        else scrollTo(0, y);
-      }
-    } catch (e) {}
-  }
-}
-
-// Editing is explicit: Save appears only when a form has unsaved changes,
-// Enter never submits an edit form, and each form submits at most once.
+// Save/Cancel appear only when a form has unsaved changes.
 document.addEventListener('DOMContentLoaded', () => {
-  const snapshot = form => JSON.stringify([...new FormData(form)].sort());
-  // Compare against the server-rendered values, not whatever the browser
-  // restored into the fields; otherwise restored edits never look dirty.
-  const defaultSnapshot = form => {
+  const show = (el, on) => {
+    el.style.display = on ? '' : 'none';
+  };
+  const dirty = form => {
     const clone = form.cloneNode(true);
     clone.reset();
-    return JSON.stringify([...new FormData(clone)].sort());
+    return JSON.stringify([...new FormData(form)].sort()) !== JSON.stringify([...new FormData(clone)].sort());
   };
-  const baseline = new Map();
-  const dirtyForms = new Set();
-  // Warn only on edits the user actually made in this visit. Comparing values
-  // against a baseline also trips on browser-restored state, which is why a
-  // plain Enter in a search box used to nag about unsaved changes.
-  const hasUnsavedChanges = () => [...dirtyForms].some(form => !form.dataset.sent);
-  const show = (el, on) => {
-    const wasHidden = el.style.display === 'none';
-    el.style.display = on ? '' : 'none';
-    if (on && wasHidden && el.animate) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120 });
-  };
-  const syncSaveButton = form => {
-    // Compare values, not "was touched": toggling a checkbox back to its saved
-    // state must hide Save and Cancel again.
-    const dirty = baseline.get(form) !== snapshot(form);
-    if (dirty) dirtyForms.add(form);
-    else dirtyForms.delete(form);
-    const button = form.querySelector('button.save');
-    if (button) show(button, dirty);
-    // Row-level Cancel joins Save only when there is an actual edit to undo.
-    // The MARC editor Cancel stays available so it can close the editor too.
-    for (const cancel of form.querySelectorAll('button.cancel:not(.attr-toggle)')) {
-      show(cancel, dirty);
-    }
-  };
-  const syncAll = () => {
-    for (const form of document.querySelectorAll('form[method="post"]')) syncSaveButton(form);
+  const sync = form => {
+    const changed = dirty(form);
+    const save = form.querySelector('button.save');
+    if (save) show(save, changed);
+    for (const cancel of form.querySelectorAll('button.cancel:not(.attr-toggle)')) show(cancel, changed);
   };
   for (const form of document.querySelectorAll('form[method="post"]')) {
-    baseline.set(form, defaultSnapshot(form));
-    form.addEventListener('submit', event => {
-      if (form.dataset.sent) {
-        event.preventDefault();
-        return;
-      }
-      form.dataset.sent = '1';
+    form.addEventListener('input', () => sync(form));
+    form.addEventListener('change', () => sync(form));
+    form.addEventListener('submit', () => (form.dataset.sent = '1'));
+    form.addEventListener('click', event => {
+      if (!event.target.closest('button.cancel')) return;
+      form.reset();
+      sync(form);
     });
-    form.addEventListener('input', () => syncSaveButton(form));
-    form.addEventListener('change', () => syncSaveButton(form));
+    sync(form);
   }
-  syncAll();
-  // Cancel always restores the server-rendered values and clears dirty state.
-  document.addEventListener('click', event => {
-    const button = event.target.closest('button.cancel');
-    if (!button) return;
-    const form = button.closest('form');
-    if (!form) return;
-    form.reset();
-    dirtyForms.delete(form);
-    syncSaveButton(form);
-  });
-  // Chrome restores edited values on back/forward without firing input events.
-  addEventListener('pageshow', syncAll);
-  addEventListener('beforeunload', event => {
-    if (hasUnsavedChanges()) {
-      event.preventDefault();
-      event.returnValue = '';
-    }
-  });
-  document.addEventListener(
-    'click',
-    event => {
-      const link = event.target.closest('a[href]');
-      if (!link || link.target === '_blank' || link.getAttribute('href').charAt(0) === '#' || !hasUnsavedChanges()) return;
-      if (!window.confirm('You have unsaved changes. Leave without saving?')) event.preventDefault();
-    },
-    true
-  );
-  document.addEventListener('keydown', event => {
-    const target = event.target;
-    const form = target.closest && target.closest('form');
-    const isEditSubmit =
-      event.key === 'Enter' &&
-      form &&
-      (form.getAttribute('action') || '').indexOf('change/propose') > -1 &&
-      target.tagName !== 'TEXTAREA' &&
-      target.tagName !== 'BUTTON';
-    if (isEditSubmit) event.preventDefault();
-  });
 });
 
-
-// Flash messages are confirmations, not permanent UI: fade them out.
+// Flash messages fade out after a few seconds.
 document.addEventListener('DOMContentLoaded', () => {
   for (const msg of document.querySelectorAll('.msg')) {
     setTimeout(() => {
@@ -144,12 +46,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// MARC fields: Edit opens one inline editor row at a time; Cancel closes it.
+// MARC fields: one inline editor row open at a time.
 document.addEventListener('click', event => {
   const toggle = event.target.closest('.attr-toggle');
   if (!toggle) return;
-  const id = toggle.getAttribute('data-target');
-  const row = document.getElementById(id);
+  const row = document.getElementById(toggle.getAttribute('data-target'));
   if (!row) return;
   const open = row.hidden;
   for (const editor of document.querySelectorAll('tr.attr-editor')) editor.hidden = true;

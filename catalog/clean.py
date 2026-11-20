@@ -2,11 +2,8 @@
 
 import re
 from datetime import date, datetime
-from urllib.parse import urlparse
-
 from django import forms
 from django.core.exceptions import ValidationError
-from django.core.validators import URLValidator
 
 YEAR_MIN, YEAR_MAX = -4000, 2100
 
@@ -35,19 +32,6 @@ class FlagField(forms.Field):
             return 0
         raise ValidationError("Must be yes or no.")
 
-
-class HttpsURLField(forms.URLField):
-    default_validators = [URLValidator(schemes=["https"])]
-
-    def clean(self, value):
-        value = super().clean(value)
-        if not value:
-            return ""
-        parsed = urlparse(value)
-        host = (parsed.hostname or "").lower()
-        if parsed.username or parsed.password or host in ("localhost", "127.0.0.1", "::1") or host.endswith(".local"):
-            raise ValidationError("URL cannot point at a local address.")
-        return value
 
 
 class CodeField(forms.RegexField):
@@ -89,11 +73,6 @@ def F(**fields):
     return type("F", (forms.Form,), fields)
 
 
-ShelfForm = F(
-    shelf_pk=forms.IntegerField(min_value=1),
-    book_pk=forms.IntegerField(min_value=1),
-    want=FlagField(required=False),
-)
 BookForm = F(
     pk=forms.IntegerField(min_value=1, max_value=99999999),
     title=TextField(max_length=500, required=False),
@@ -107,12 +86,6 @@ AliasForm = F(
     alias=TextField(max_length=240),
     heading=FlagField(required=False),
 )
-UrlForm = F(
-    pk=forms.IntegerField(min_value=1, required=False),
-    fk_authors=forms.IntegerField(min_value=1),
-    description=TextField(max_length=240, required=False),
-    url=HttpsURLField(max_length=240),
-)
 AttrForm = F(
     pk=forms.IntegerField(min_value=1, required=False),
     fk_books=forms.IntegerField(min_value=1),
@@ -121,11 +94,6 @@ AttrForm = F(
     nonfiling=forms.IntegerField(min_value=0, max_value=40, required=False),
     indicators=IndicatorsField(),
     fk_langs=CodeField(LANG_RE, required=False),
-)
-XferForm = F(
-    fk_authors_from=forms.IntegerField(min_value=1),
-    fk_authors_to=forms.IntegerField(min_value=1),
-    fk_roles=TextField(max_length=10, required=False),
 )
 
 
@@ -164,23 +132,6 @@ class BAForm(forms.Form):
 
     def clean_fk_roles(self):
         return self.cleaned_data.get("fk_roles") or "cr"
-
-
-class LangForm(forms.Form):
-    pk = CodeField(LANG_RE)
-    lang = TextField(max_length=80)
-
-    def clean(self):
-        data = super().clean()
-        data["language"] = data.get("lang")
-        return data
-
-
-def entity_form(label, max_len=240, str_pk=False, regex=None, case="lower"):
-    return F(
-        pk=CodeField(regex, case=case) if str_pk else forms.IntegerField(min_value=1),
-        **{label: TextField(max_length=max_len)},
-    )
 
 
 def cleaned(form_cls, data, action=None, keep=None, optional_pk=True):

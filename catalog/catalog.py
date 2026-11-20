@@ -1,4 +1,4 @@
-"""Read/search layer over libgutenberg models, plus shelf and book queries."""
+"""Read/search layer over libgutenberg models."""
 
 from contextlib import contextmanager
 
@@ -64,89 +64,6 @@ def _book_query(query):
     return cat.c.tsvec.op("@@")(func.websearch_to_tsquery("english", query))
 
 
-def _shelf_stmt():
-    m = _models()
-    shelf, mem = m.Bookshelf, m.t_mn_books_bookshelves
-    stmt = (
-        select(
-            shelf.id.label("pk"),
-            shelf.bookshelf,
-            shelf.downloads,
-            func.count(mem.c.fk_books).label("books"),
-        )
-        .outerjoin(mem, mem.c.fk_bookshelves == shelf.id)
-        .group_by(shelf.id, shelf.bookshelf, shelf.downloads)
-    )
-    return shelf, stmt
-
-
-def shelves(query="", page=1, sort=""):
-    shelf, stmt = _shelf_stmt()
-    order = {
-        "newest": shelf.id.desc(),
-        "books": func.count(_models().t_mn_books_bookshelves.c.fk_books).desc(),
-        "downloads": shelf.downloads.desc(),
-    }.get(sort)
-    stmt = stmt.order_by(None).order_by(order if order is not None else shelf.bookshelf)
-    if query:
-        stmt = stmt.where(
-            shelf.id == int(query)
-            if query.isdigit()
-            else shelf.tsvec.op("@@")(func.websearch_to_tsquery("english", query))
-        )
-    with _session() as s:
-        return _paginate(stmt, s, page)
-
-
-def shelf(pk):
-    _shelf, stmt = _shelf_stmt()
-    with _session() as s:
-        row = s.execute(stmt.where(_shelf.id == pk)).mappings().first()
-    return dict(row) if row else None
-
-
-def shelf_names(pks):
-    pks = list(dict.fromkeys(pk for pk in pks if pk))
-    if not pks:
-        return {}
-    shelf = _models().Bookshelf
-    with _session() as s:
-        return {
-            pk: name for pk, name in s.execute(select(shelf.id, shelf.bookshelf).where(shelf.id.in_(pks))).all()
-        }
-
-
-def members(shelf_pk, book_pks):
-    book_pks = list(book_pks)
-    if not book_pks:
-        return set()
-    mem = _models().t_mn_books_bookshelves
-    with _session() as s:
-        return {
-            row[0]
-            for row in s.execute(
-                select(mem.c.fk_books).where(mem.c.fk_bookshelves == shelf_pk, mem.c.fk_books.in_(book_pks))
-            ).all()
-        }
-
-
-def on_shelf(shelf_pk, book_pk):
-    return book_pk in members(shelf_pk, [book_pk])
-
-
-def titles(pks):
-    pks = list(dict.fromkeys(pk for pk in pks if pk))
-    if not pks:
-        return {}
-    cat = _models().t_v_appserver_books_4
-    with _session() as s:
-        rows = _titles([dict(row) for row in s.execute(select(cat.c.pk, cat.c.title).where(cat.c.pk.in_(pks))).mappings()])
-    return {row["pk"]: row["title"] for row in rows}
-
-
-def book_title(pk):
-    return titles([pk]).get(pk)
-
 
 def _books_stmt(cond):
     cat = _models().t_v_appserver_books_4
@@ -162,20 +79,6 @@ def _book_order(sort):
         "title": cat.c.filing,
     }.get(sort)
 
-
-def shelf_books(shelf_pk, query="", page=1, also=(), sort=""):
-    m = _models()
-    cat, mem = m.t_v_appserver_books_4, m.t_mn_books_bookshelves
-    cond = cat.c.pk.in_(select(mem.c.fk_books).where(mem.c.fk_bookshelves == shelf_pk))
-    if [pk for pk in also if pk]:
-        cond = or_(cond, cat.c.pk.in_([pk for pk in also if pk]))
-    if query:
-        cond = and_(cond, _book_query(query))
-    order = _book_order(sort)
-    stmt = _books_stmt(cond).order_by(None).order_by(order if order is not None else cat.c.filing)
-    with _session() as s:
-        rows, total = _paginate(stmt, s, page)
-    return _titles(rows), total
 
 
 def _search_books(query, page=1, size=None, sort=""):
@@ -312,8 +215,8 @@ _MN = {
 }
 
 
-def _mn(session, pk, spec):
-    table_name, model, fk, pkcol, label, alias, order = spec
+def _mn(session, pk, kind):
+    table_name, model, fk, pkcol, label, alias, order = _MN[kind]
     m = _m()
     table, col = getattr(m, table_name), getattr(m, model)
     field, key = getattr(col, pkcol), getattr(col, label)
@@ -324,22 +227,6 @@ def _mn(session, pk, spec):
         .where(table.c.fk_books == pk)
         .order_by(field if order == "id" else key),
     )
-
-
-def book_subjects(s, pk):
-    return _mn(s, pk, _MN["subjects"])
-
-
-def book_langs(s, pk):
-    return _mn(s, pk, _MN["langs"])
-
-
-def book_loccs(s, pk):
-    return _mn(s, pk, _MN["loccs"])
-
-
-def book_categories(s, pk):
-    return _mn(s, pk, _MN["categories"])
 
 
 def book_authors(session, pk):
@@ -386,15 +273,6 @@ def author_aliases(session, pk):
     return _rows(session, select(m.Alias.pk, m.Alias.alias, m.Alias.heading).where(m.Alias.fk_authors == pk).order_by(m.Alias.pk))
 
 
-def author_urls(session, pk):
-    m = _m()
-    return _rows(
-        session,
-        select(m.AuthorUrl.pk, m.AuthorUrl.description, m.AuthorUrl.url)
-        .where(m.AuthorUrl.fk_authors == pk)
-        .order_by(m.AuthorUrl.pk),
-    )
-
 
 def author_books(session, pk):
     m = _m()
@@ -413,71 +291,12 @@ def author_book_count(session, pk):
     return session.scalar(select(func.count()).select_from(m.BookAuthor).where(m.BookAuthor.fk_authors == int(pk))) or 0
 
 
-def author_links(session, pk):
-    m = _m()
-    return _rows(
-        session,
-        select(m.BookAuthor.fk_books, m.BookAuthor.fk_authors, m.BookAuthor.fk_roles, m.BookAuthor.heading).where(
-            m.BookAuthor.fk_authors == int(pk)
-        ),
-    )
-
-
 def linked(session, table, book_pk, other_field, other_pk, extras=None):
     cond = [table.c.fk_books == int(book_pk), getattr(table.c, other_field) == other_pk] + [
         getattr(table.c, key) == value for key, value in (extras or {}).items()
     ]
     return session.execute(select(table).where(and_(*cond))).mappings().first()
 
-
-def list_simple(model, pk_attr, label_attr, query, page, pk_is_str=False, size=None, sort="", count_table=None, count_field=None):
-    pkcol, label = getattr(model, pk_attr), getattr(model, label_attr)
-    stmt = select(pkcol.label("pk"), label.label("name"))
-    if query:
-        pattern = "%" + like_pattern(query) + "%"
-        if not pk_is_str and str(query).isdigit():
-            stmt = stmt.where(pkcol == int(query))
-        elif pk_is_str:
-            stmt = stmt.where(pkcol.ilike(query) | label.ilike(pattern, escape="\\"))
-        else:
-            stmt = stmt.where(label.ilike(pattern, escape="\\"))
-    order = label
-    if sort == "books" and count_table is not None:
-        order = (
-            select(func.count())
-            .select_from(count_table)
-            .where(count_table.c[count_field] == pkcol)
-            .scalar_subquery()
-            .desc()
-        )
-    elif sort == "code":
-        order = pkcol
-    elif sort == "newest":
-        order = pkcol.desc()
-    with session() as s:
-        return _paginate(stmt.order_by(order), s, page, size)
-
-
-def search_categories(q, p=1, sort=""):
-    return list_simple(_m().Category, "pk", "category", q, p, sort=sort, count_table=_m().t_mn_books_categories, count_field="fk_categories")
-
-
-def search_langs(q, p=1, sort=""):
-    return list_simple(_m().Lang, "id", "language", q, p, True, sort=sort, count_table=_m().t_mn_books_langs, count_field="fk_langs")
-
-
-def search_loccs(q, p=1, sort=""):
-    return list_simple(_m().Locc, "id", "locc", q, p, True, sort=sort, count_table=_m().t_mn_books_loccs, count_field="fk_loccs")
-
-
-def search_subjects(q, p=1, size=None, sort=""):
-    return list_simple(_m().Subject, "id", "subject", q, p, size=size, sort=sort, count_table=_m().t_mn_books_subjects, count_field="fk_subjects")
-
-
-def simple_entity(model, pk_attr, label_attr, pk, str_pk=False):
-    with session() as s:
-        row = s.get(getattr(_m(), model), pk if str_pk else int(pk))
-        return None if row is None else {"pk": getattr(row, pk_attr), "name": getattr(row, label_attr)}
 
 
 def attribute_row(session, pk):
@@ -502,19 +321,12 @@ def alias_row(session, pk):
     return {"pk": row.pk, "fk_authors": row.fk_authors, "alias": row.alias, "heading": int(row.heading or 0)}
 
 
-def url_row(session, pk):
-    row = session.get(_m().AuthorUrl, int(pk))
-    if row is None:
-        return None
-    return {"pk": row.pk, "fk_authors": row.fk_authors, "description": row.description or "", "url": row.url}
-
 
 def book_page(pk):
     with session() as s:
         book = book_row(s, pk)
         if book is None:
             return None
-        langs, loccs, cats = book_langs(s, pk), book_loccs(s, pk), book_categories(s, pk)
         attrs = book_attributes(s, pk)
         sub = ""
         for r in attrs:
@@ -527,10 +339,10 @@ def book_page(pk):
             "subtitle": sub,
             "authors": book_authors(s, pk),
             "attributes": attrs,
-            "subjects": book_subjects(s, pk),
-            "langs": langs,
-            "loccs": loccs,
-            "categories": cats,
+            "subjects": _mn(s, pk, "subjects"),
+            "langs": _mn(s, pk, "langs"),
+            "loccs": _mn(s, pk, "loccs"),
+            "categories": _mn(s, pk, "categories"),
         }
 
 
@@ -542,75 +354,8 @@ def author_page(pk):
         return {
             "author": author,
             "aliases": author_aliases(s, pk),
-            "urls": author_urls(s, pk),
             "books": author_books(s, pk),
             "nbooks": author_book_count(s, pk),
         }
 
 
-def empty_authors(page=1):
-    m = _m()
-    stmt = (
-        select(m.Author.id.label("pk"), m.Author.name.label("author"), m.Author.birthdate, m.Author.deathdate)
-        .outerjoin(m.BookAuthor, m.BookAuthor.fk_authors == m.Author.id)
-        .where(m.BookAuthor.fk_books.is_(None))
-        .order_by(m.Author.name, m.Author.id)
-    )
-    with session() as s:
-        return _paginate(stmt, s, page)
-
-
-def lacking_subject_locc(page=1, days=0):
-    m = _m()
-    attr, sub, locc, ba, auth, book = m.Attribute, m.t_mn_books_subjects, m.t_mn_books_loccs, m.BookAuthor, m.Author, m.Book
-    stmt = (
-        select(
-            attr.fk_books.label("pk"),
-            attr.text.label("title"),
-            auth.name.label("author"),
-            sub.c.fk_subjects.label("fk_subjects"),
-            locc.c.fk_loccs.label("fk_loccs"),
-        )
-        .select_from(attr)
-        .outerjoin(sub, sub.c.fk_books == attr.fk_books)
-        .outerjoin(locc, locc.c.fk_books == attr.fk_books)
-        .join(ba, ba.fk_books == attr.fk_books)
-        .join(auth, auth.id == ba.fk_authors)
-        .where(attr.fk_attriblist == 245)
-        .where(or_(sub.c.fk_subjects.is_(None), locc.c.fk_loccs.is_(None)))
-        .distinct(attr.fk_books)
-        .order_by(attr.fk_books, attr.text, auth.name)
-    )
-    if days:
-        stmt = stmt.join(book, book.pk == attr.fk_books).where(book.release_date >= func.current_date() - int(days))
-    with session() as s:
-        return _paginate(stmt, s, page)
-
-
-def attrib_usage():
-    m = _m()
-    stmt = (
-        select(m.Attriblist.pk, m.Attriblist.name, func.count(m.Attribute.pk).label("cnt"))
-        .outerjoin(m.Attribute, m.Attribute.fk_attriblist == m.Attriblist.pk)
-        .group_by(m.Attriblist.pk, m.Attriblist.name)
-        .order_by(m.Attriblist.pk)
-    )
-    with session() as s:
-        return _rows(s, stmt)
-
-
-def attrib_uses(pk, page=1):
-    m = _m()
-    stmt = (
-        select(m.Attribute.fk_books.label("pk"), m.Attribute.text)
-        .where(m.Attribute.fk_attriblist == int(pk))
-        .order_by(m.Attribute.fk_books, m.Attribute.pk)
-    )
-    with session() as s:
-        return _paginate(stmt, s, page)
-
-
-def attrib_name(pk):
-    with session() as s:
-        row = s.get(_m().Attriblist, int(pk))
-        return None if row is None else row.name

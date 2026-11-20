@@ -8,7 +8,6 @@ Type=simple
 RuntimeDirectory=catalog_manager
 WorkingDirectory=/var/lib/catalog_manager
 EnvironmentFile=-/var/lib/catalog_manager/.env
-Environment=CATALOG_APP=catalog
 ExecStartPre=-/usr/bin/mkdir -p /var/run/catalog_manager
 ExecStart=/var/lib/catalog_manager/.venv/bin/gunicorn \
     --bind 127.0.0.1:8000 \

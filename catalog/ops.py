@@ -11,7 +11,6 @@ from . import catalog as c
 from .clean import (
     LANG_RE,
     LOCC_RE,
-    ROLE_RE,
     AliasForm,
     AttrForm,
     AuthorForm,
@@ -20,12 +19,7 @@ from .clean import (
     BookForm,
     CodeField,
     F,
-    LangForm,
-    ShelfForm,
-    UrlForm,
-    XferForm,
     cleaned,
-    entity_form,
     jsonable,
 )
 
@@ -67,18 +61,8 @@ class Op:
         return self._snap(session, data) if self._snap else None
 
     def validate(self, session, action, data, before):
-        return (
-            jsonable(
-                self._val(
-                    session,
-                    action,
-                    cleaned(self.form, data, action, keep=self.keep, optional_pk=self.optional_pk),
-                    before,
-                )
-            )
-            if self.form
-            else jsonable(self._val(session, action, data, before))
-        )
+        bound = cleaned(self.form, data, action, keep=self.keep, optional_pk=self.optional_pk)
+        return jsonable(self._val(session, action, bound, before))
 
     def apply(self, session, action, before, after):
         return self._apply(session, action, before, after)
@@ -149,39 +133,6 @@ def exists_state(action, before, kind):
         raise Bad("Already linked." if action == "link" else "That %s already exists." % kind)
     if action in ("update", "unlink", "delete") and not before:
         raise Bad("Not linked." if action == "unlink" else "No such %s." % kind)
-
-
-def _shelf_val(session, action, data, before):
-    if c.shelf(data["shelf_pk"]) is None:
-        raise Bad("No such bookshelf.")
-    if c.book_title(data["book_pk"]) is None:
-        raise Bad("No ebook #%s exists in the catalog." % data["book_pk"])
-    want = {"link": 1, "unlink": 0}.get(action, data.get("want") or 0)
-    if want and before and before.get("on"):
-        raise Bad("That book is already on this shelf.")
-    if not want and before and not before.get("on"):
-        raise Bad("That book is not on this shelf.")
-    return {"shelf_pk": data["shelf_pk"], "book_pk": data["book_pk"], "on": want}
-
-
-def _shelf_apply(session, action, before, after):
-    keys = dict(fk_books=after["book_pk"], fk_bookshelves=after["shelf_pk"])
-    link_apply(session, _m().t_mn_books_bookshelves, after["on"], keys)
-    return after
-
-
-Op(
-    "shelf_member",
-    form=ShelfForm,
-    domain="shelves",
-    snapshot=lambda s, d: {
-        "shelf_pk": int(d["shelf_pk"]),
-        "book_pk": int(d["book_pk"]),
-        "on": int(c.on_shelf(int(d["shelf_pk"]), int(d["book_pk"]))),
-    },
-    validate=_shelf_val,
-    apply=_shelf_apply,
-)
 
 
 def _book_val(session, action, data, before):
@@ -343,26 +294,6 @@ Op(
         {"fk_authors": f["fk_authors"], "alias": f.get("alias"), "heading": f.get("heading")} if a != "delete" else {},
     ),
 )
-Op(
-    "author_url",
-    form=UrlForm,
-    snapshot=snap_pk(c.url_row),
-    validate=lambda s, a, d, b: _child_val(s, a, d, b, "URL", "fk_authors", "author", c.exists_author),
-    apply=lambda s, a, b, f: apply_row(
-        s,
-        _m().AuthorUrl,
-        a,
-        f,
-        {
-            "fk_authors": f["fk_authors"],
-            "description": f.get("description") or None,
-            "url": f.get("url"),
-        }
-        if a != "delete"
-        else {},
-    ),
-)
-
 
 def add_link(name, table_fn, field, other_name, exists, other_field=None):
     form = F(
@@ -568,95 +499,4 @@ Op(
         if a == "delete" or f.get("fk_attriblist") != 245
         else 'update attributes set  "fk_attriblist" = 245 where pk = %s' % f["pk"]
     ),
-)
-
-
-def add_entity(name, model, pk_name, label_field, form, str_pk=False):
-    def snapshot(session, data):
-        raw = data.get("pk")
-        if raw in (None, ""):
-            return None
-        bound = cleaned(form, {"pk": raw}, action="delete")
-        row = session.get(getattr(_m(), model), bound["pk"])
-        return None if row is None else {"pk": getattr(row, pk_name), label_field: getattr(row, label_field)}
-
-    def validate(session, action, data, before):
-        if action == "delete":
-            _need(before, name)
-            return {"pk": data["pk"]}
-        exists_state(action, before, name)
-        return {"pk": data["pk"], label_field: data.get(label_field) or data.get(name)}
-
-    def apply(session, action, before, after):
-        return apply_row(
-            session,
-            getattr(_m(), model),
-            action,
-            after,
-            {label_field: after[label_field]} if action != "delete" else {},
-            pk_name,
-        )
-
-    Op(
-        name,
-        form=form,
-        optional_pk=not str_pk,
-        snapshot=snapshot,
-        validate=validate,
-        apply=apply,
-    )
-
-
-add_entity("subject", "Subject", "id", "subject", entity_form("subject"))
-add_entity("category", "Category", "pk", "category", entity_form("category"))
-add_entity("lang", "Lang", "id", "language", LangForm, str_pk=True)
-add_entity(
-    "locc",
-    "Locc",
-    "id",
-    "locc",
-    entity_form("locc", str_pk=True, regex=LOCC_RE, case="upper"),
-    str_pk=True,
-)
-
-
-def _xfer_val(session, action, data, before):
-    src, dst, role = data["fk_authors_from"], data["fk_authors_to"], data.get("fk_roles") or "same"
-    if src == dst and role in ("", "same"):
-        raise Bad("Choose a different author, or a new role.")
-    if not c.exists_author(session, src) or not c.exists_author(session, dst):
-        raise Bad("Both authors must exist.")
-    if not before or not before.get("links"):
-        raise Bad("That author has no books to transfer.")
-    if role != "same":
-        bound = CodeField(ROLE_RE).clean(role)
-        if bound not in _ids(session, _m().Role.pk):
-            raise Bad("That author role is not in the catalog.")
-        role = bound
-    return {
-        "fk_authors_from": src,
-        "fk_authors_to": dst,
-        "fk_roles": role,
-        "links": before["links"],
-    }
-
-
-def _xfer_apply(session, action, before, after):
-    table = _m().BookAuthor.__table__
-    values = {"fk_authors": after["fk_authors_to"]}
-    if after["fk_roles"] != "same":
-        values["fk_roles"] = after["fk_roles"]
-    session.execute(table.update().where(table.c.fk_authors == after["fk_authors_from"]).values(**values))
-    return after
-
-
-Op(
-    "author_transfer",
-    form=XferForm,
-    snapshot=lambda s, d: {
-        "links": c.author_links(s, int(d["fk_authors_from"])),
-        "fk_authors_from": int(d["fk_authors_from"]),
-    },
-    validate=_xfer_val,
-    apply=_xfer_apply,
 )

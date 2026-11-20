@@ -1,6 +1,3 @@
-from django.conf import settings
-
-
 class SecurityHeadersMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
@@ -16,9 +13,10 @@ class SecurityHeadersMiddleware:
 
 
 def brand(request):
-    catalog = settings.CATALOG_APP == "catalog"
+    from django.conf import settings
+
     return {
-        "is_catalog": catalog,
-        "brand": "Catalog Manager" if catalog else "Bookshelf Manager",
+        "is_catalog": True,
+        "brand": "Catalog Manager",
         "admin_url": settings.ADMIN_URL,
     }

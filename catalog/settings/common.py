@@ -33,10 +33,6 @@ SECRET_KEY = env("DJANGO_SECRET_KEY", _DEFAULT_KEY)
 DEBUG = env("DJANGO_DEBUG", "1") == "1"
 if not DEBUG and SECRET_KEY == _DEFAULT_KEY:
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set when DEBUG=0.")
-CATALOG_APP = env_first("CATALOG_APP", "BSM_APP", default="catalog").strip().lower()
-if CATALOG_APP not in ("catalog", "shelves"):
-    raise ImproperlyConfigured("CATALOG_APP must be catalog or shelves.")
-BSM_APP = CATALOG_APP  # legacy alias
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost")
 CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 for _key, _default in (
@@ -66,7 +62,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "catalog.middleware.SecurityHeadersMiddleware",
 ]
-ROOT_URLCONF = "catalog.urls_shelves" if CATALOG_APP == "shelves" else "catalog.urls"
+ROOT_URLCONF = "catalog.urls"
 WSGI_APPLICATION = "catalog.wsgi.application"
 TEMPLATES = [
     {
@@ -88,20 +84,7 @@ DATABASES = {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": env("DJANGO_DB_PATH", str(BASE_DIR / "auth.sqlite3")),
     },
-    # Unmanaged mirrors / robot blocks (libgutenberg catalog). Auth + Change stay on SQLite.
-    "gutenberg": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": env("PGDATABASE", "gutenberg"),
-        "USER": env("PGUSER", "gutenberg"),
-        "PASSWORD": env("PGPASSWORD", ""),
-        "HOST": env("PGHOST", "127.0.0.1"),
-        "PORT": env("PGPORT", "5432"),
-        "OPTIONS": {"options": "-c search_path=public,robots"},
-        # Avoid creating a second Postgres test DB; unmanaged models are not migrated.
-        "TEST": {"MIRROR": "default"},
-    },
 }
-DATABASE_ROUTERS = ["catalog.db.GutenbergRouter"]
 MIGRATION_MODULES = {"catalog": None}
 CACHES = {
     "default": {
@@ -149,11 +132,11 @@ STORAGES = {
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_URL = "login"
-LOGIN_REDIRECT_URL = "shelves" if CATALOG_APP == "shelves" else "books"
+LOGIN_REDIRECT_URL = "books"
 LOGOUT_REDIRECT_URL = "login"
 ADMIN_URL = env("DJANGO_ADMIN_URL", "admin").strip("/")
-SESSION_COOKIE_NAME = "catalog_shelf" if CATALOG_APP == "shelves" else "catalog_cat"
-CSRF_COOKIE_NAME = "catalog_shelf_csrf" if CATALOG_APP == "shelves" else "catalog_cat_csrf"
+SESSION_COOKIE_NAME = "catalog_cat"
+CSRF_COOKIE_NAME = "catalog_cat_csrf"
 CSRF_COOKIE_HTTPONLY = True
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1048576
 SESSION_COOKIE_AGE = int(env("DJANGO_SESSION_AGE", "43200"))
@@ -173,19 +156,12 @@ PAGE_SIZE = int(env_first("CATALOG_PAGE_SIZE", "BSM_PAGE_SIZE", default="50"))
 HIT_PAGE_SIZE = int(env_first("CATALOG_HIT_PAGE_SIZE", "BSM_HIT_PAGE_SIZE", default="8"))
 RATE_LOGIN = env_first("CATALOG_RATE_LOGIN", "BSM_RATE_LOGIN", default="10/m")
 RATE_POST = env_first("CATALOG_RATE_POST", "BSM_RATE_POST", default="60/m")
-# Jobs API (token auth): separate from form POSTs; covers GET+POST.
-RATE_JOBS = env_first("CATALOG_RATE_JOBS", "BSM_RATE_JOBS", default="30/m")
-JOBS_API_TOKEN = env("JOBS_API_TOKEN", "demo-token")
 CATALOG_TRUSTED_PROXIES = env_list_first("CATALOG_TRUSTED_PROXIES", "BSM_TRUSTED_PROXIES", default="127.0.0.1,::1")
 BSM_TRUSTED_PROXIES = CATALOG_TRUSTED_PROXIES  # legacy alias
 # Callable path: django-ratelimit resolves X-Real-IP only from trusted proxies.
 RATELIMIT_IP_META_KEY = "catalog.proxy.client_ip"
 CATALOG_REVIEWERS = env_list_first("CATALOG_REVIEWERS", "BSM_REVIEWERS")
 CATALOG_CATALOGERS = env_list_first("CATALOG_CATALOGERS", "BSM_CATALOGERS")
-CATALOG_SHELF_USERS = env_list_first("CATALOG_SHELF_USERS", "BSM_SHELF_USERS")
-CATALOG_INFRA_ADMINS = env_list_first("CATALOG_INFRA_ADMINS", "BSM_INFRA_ADMINS")
 BSM_REVIEWERS = CATALOG_REVIEWERS
 BSM_CATALOGERS = CATALOG_CATALOGERS
-BSM_SHELF_USERS = CATALOG_SHELF_USERS
-BSM_INFRA_ADMINS = CATALOG_INFRA_ADMINS
 os.makedirs(LOG_DIR, exist_ok=True)
