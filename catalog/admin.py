@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from .models import Job, Mirror, RobotBlock, can_manage_infra, can_use_app
 
-admin.site.site_header = "Catalog Manager" if settings.CATALOG_APP == "catalog" else "Bookshelf Manager"
+admin.site.site_header = "Catalog Manager"
 admin.site.site_title = admin.site.site_header
 admin.site.index_title = admin.site.site_header
 
