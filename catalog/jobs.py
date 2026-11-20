@@ -4,6 +4,7 @@ PGLAF (or a git hook) POSTs a job; the worker on ibiblio claims rows with
 SELECT ... FOR UPDATE SKIP LOCKED, runs them, and marks done/failed.
 """
 
+import hashlib
 import secrets
 import time
 import uuid
@@ -17,11 +18,24 @@ from .models import Job
 JOB_TYPES = ("git_pull", "workflow_ingest", "rebuild")
 
 
-def token_ok(request):
+def _request_token(request):
     header = request.headers.get("Authorization", "")
-    token = header[7:] if header.startswith("Bearer ") else request.headers.get("X-Api-Token", "")
+    if header.startswith("Bearer "):
+        return header[7:]
+    return request.headers.get("X-Api-Token", "") or ""
+
+
+def token_ok(request):
     expected = getattr(settings, "JOBS_API_TOKEN", "")
-    return bool(expected) and secrets.compare_digest(token or "", expected)
+    return bool(expected) and secrets.compare_digest(_request_token(request), expected)
+
+
+def rate_key(group, request):
+    """Per-token bucket for /api/jobs/ (no IP). Missing token → shared anon bucket."""
+    token = _request_token(request)
+    if not token:
+        return "anon"
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:32]
 
 
 def enqueue(job_type, payload=None, key=None):

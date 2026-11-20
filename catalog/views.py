@@ -441,7 +441,7 @@ def reports(request):
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
-@ratelimit(key="ip", rate=settings.RATE_POST, method="POST", block=True)
+@ratelimit(key="catalog.jobs.rate_key", rate=settings.RATE_JOBS, method=["GET", "POST"], block=True)
 def api_jobs(request):
     """Token-authenticated job queue API for PGLAF and git hooks."""
     if not jobq.token_ok(request):

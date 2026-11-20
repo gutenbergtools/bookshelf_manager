@@ -173,9 +173,12 @@ PAGE_SIZE = int(env_first("CATALOG_PAGE_SIZE", "BSM_PAGE_SIZE", default="50"))
 HIT_PAGE_SIZE = int(env_first("CATALOG_HIT_PAGE_SIZE", "BSM_HIT_PAGE_SIZE", default="8"))
 RATE_LOGIN = env_first("CATALOG_RATE_LOGIN", "BSM_RATE_LOGIN", default="10/m")
 RATE_POST = env_first("CATALOG_RATE_POST", "BSM_RATE_POST", default="60/m")
+# Jobs API (token auth): separate from form POSTs; covers GET+POST.
+RATE_JOBS = env_first("CATALOG_RATE_JOBS", "BSM_RATE_JOBS", default="30/m")
 JOBS_API_TOKEN = env("JOBS_API_TOKEN", "demo-token")
 CATALOG_TRUSTED_PROXIES = env_list_first("CATALOG_TRUSTED_PROXIES", "BSM_TRUSTED_PROXIES", default="127.0.0.1,::1")
 BSM_TRUSTED_PROXIES = CATALOG_TRUSTED_PROXIES  # legacy alias
+# Callable path: django-ratelimit resolves X-Real-IP only from trusted proxies.
 RATELIMIT_IP_META_KEY = "catalog.proxy.client_ip"
 CATALOG_REVIEWERS = env_list_first("CATALOG_REVIEWERS", "BSM_REVIEWERS")
 CATALOG_CATALOGERS = env_list_first("CATALOG_CATALOGERS", "BSM_CATALOGERS")

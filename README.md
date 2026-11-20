@@ -6,18 +6,18 @@ One codebase serves two deployments, kept apart by `CATALOG_APP` (legacy alias: 
 
 | Mode | `CATALOG_APP` | Who signs in | What they get |
 |------|---------------|--------------|----------------|
-| **Catalog** | `catalog` | Catalogers | Books, authors, subjects, categories, languages, LoC classes, reports; Django admin for the changelog and mirrors/robot blocks |
+| **Catalog** | `catalog` | Catalogers | Books, authors, subjects, categories, languages, LoC classes, reports; Django admin for jobs (read-only), mirrors, and robot blocks |
 | **Shelves** | `shelves` | Volunteers | Bookshelves only (`/shelves/`, `/shelf/<id>/`); catalog URLs 404 |
 
 Each mode runs as its own process on its own hostname, for example `catalog.example.org` on `:8000` and `shelves.example.org` on `:8001`. Cookie names are per mode (`catalog_cat*` on the catalog host, `catalog_shelf*` on the shelves host), so a session from one host cannot be replayed on the other.
 
-Edits go through propose/apply with validated values. Applied rows live in a SQLite `Change` table, with `EventLog` rows recording who did what. The Django admin exposes a single read-only event log; editing history cannot be changed or removed from the web interface. AutoRebuild still reads the Postgres `public.changelog` SQL for author/title rebuilds.
+Edits go through propose/apply with validated values. AutoRebuild still reads the Postgres `public.changelog` SQL for author/title rebuilds; that changelog is not exposed in Django admin (kept out on purpose — too much UI for little gain). Cross-host triggers use the `jobs` table instead; a read-only Jobs view in admin is enough to watch pending/failed work.
 
 Do **not** leave the old PHP `/catalog/admin/` on the public site after cutover.
 
 **Languages** and **LoC Classes** are first-class catalog entities, as in the original PHP catalog admin: they live under `/languages/` and `/loccs/`, and appear as link dropdowns on the book page.
 
-**Mirrors** and **robot blocks** are not part of the day-to-day catalog UI. They live in the Django admin next to the changelog, gated by `CATALOG_INFRA_ADMINS` (falls back to catalogers if unset).
+**Mirrors** and **robot blocks** are not part of the day-to-day catalog UI. They live in the Django admin next to jobs, gated by `CATALOG_INFRA_ADMINS` (falls back to catalogers if unset).
 
 ## Security
 
@@ -25,11 +25,11 @@ Accounts are Django auth: PBKDF2 hashing, a 10-character minimum, and an in-app 
 
 The two deployments stay isolated: separate processes and hostnames, per-mode cookies, and the other surface 404s, so a session leaked from one host is useless on the other.
 
-Traffic is throttled: login by real client IP (`CATALOG_TRUSTED_PROXIES` unwraps the proxy so the limit hits the visitor, not the proxy) and every changing POST by user (`CATALOG_RATE_LOGIN`, `CATALOG_RATE_POST`). All forms carry CSRF tokens, the post-save redirect target is validated against the host, and POST bodies are capped at 1 MB.
+Traffic is throttled: login by real client IP (`CATALOG_TRUSTED_PROXIES` unwraps the proxy so the limit hits the visitor, not the proxy), every changing POST by user (`CATALOG_RATE_LOGIN`, `CATALOG_RATE_POST`), and `/api/jobs/` by API token (`CATALOG_RATE_JOBS`). All forms carry CSRF tokens, the post-save redirect target is validated against the host, and POST bodies are capped at 1 MB.
 
 Browser and transport hardening: with `DJANGO_SECURE_COOKIES=1`, Secure cookies, an HTTPS redirect and a year of HSTS. Always: HttpOnly, SameSite=Lax session and CSRF cookies, a 12-hour session age (`DJANGO_SESSION_AGE`), CSP (`default-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`), a Permissions-Policy that turns off camera, microphone and geolocation, `X-Frame-Options: DENY`, nosniff, same-origin referrer and opener policy. `DEBUG=0` refuses to start with the development secret key; hosts and origins are pinned per env file. robots.txt plus `noindex` keep it out of search engines.
 
-Integrity: edits apply only after server-side validation, then land in the append-only `Change` table, alongside `EventLog` rows naming the actor. The admin event log is read-only; mirrors and robot blocks need `CATALOG_INFRA_ADMINS` (else catalogers).
+Integrity: edits apply only after server-side validation. Jobs admin is read-only; mirrors and robot blocks need `CATALOG_INFRA_ADMINS` (else catalogers).
 
 ## Run locally
 

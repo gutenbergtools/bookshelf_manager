@@ -347,6 +347,19 @@ class JobsApiTests(SimpleTestCase):
     def test_rejects_non_object_payload(self):
         self.assertEqual(self._post(json.dumps({"job_type": "git_pull", "payload": []})).status_code, 400)
 
+    def test_rate_key_is_per_token(self):
+        from django.test import RequestFactory
+
+        from . import jobs as jobq
+
+        factory = RequestFactory()
+        a = factory.get("/api/jobs/", HTTP_AUTHORIZATION="Bearer aaa")
+        b = factory.get("/api/jobs/", HTTP_AUTHORIZATION="Bearer bbb")
+        missing = factory.get("/api/jobs/")
+        self.assertNotEqual(jobq.rate_key("jobs", a), jobq.rate_key("jobs", b))
+        self.assertEqual(jobq.rate_key("jobs", missing), "anon")
+        self.assertNotIn(".", jobq.rate_key("jobs", a))  # hash, not raw token
+
 
 class HeaderTests(SimpleTestCase):
     """Every response carries the CSP and Permissions-Policy headers (OWASP baseline)."""
